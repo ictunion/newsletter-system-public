@@ -22,6 +22,8 @@ var (
 	ErrEmailTaken = errors.New("email already used by another subscriber")
 	// ErrListNotFound: no such list, or (for AddToList) it is deleted.
 	ErrListNotFound = errors.New("list not found")
+	// ErrRuleNotFound: the rule a subscription_add came from was deleted.
+	ErrRuleNotFound = errors.New("rule not found")
 	// ErrUnsubscribed: the member opted out of the list themselves; only
 	// they can undo it.
 	ErrUnsubscribed = errors.New("member unsubscribed from the list")
@@ -199,12 +201,19 @@ func (s Service) RemoveFromList(ctx context.Context, queries *db.Queries, listID
 // AddAutomatic is one subscription_add from the reconciliation: give the
 // member a 'subscribed' row on the list with this source (and rule), unless
 // a row exists by now. Pushes when it inserted one. A list deleted
-// meanwhile is ErrListNotFound.
+// meanwhile is ErrListNotFound, a rule deleted meanwhile ErrRuleNotFound.
 func (s Service) AddAutomatic(ctx context.Context, queries *db.Queries, memberNumber int32, listID pgtype.UUID, source string, ruleID pgtype.UUID) error {
 	if list, err := queries.GetList(ctx, listID); errors.Is(err, pgx.ErrNoRows) || (err == nil && list.DeletedAt.Valid) {
 		return ErrListNotFound
 	} else if err != nil {
 		return err
+	}
+	if ruleID.Valid {
+		if exists, err := queries.RuleExists(ctx, ruleID); err != nil {
+			return err
+		} else if !exists {
+			return ErrRuleNotFound
+		}
 	}
 	subscriber, _, err := memberSubscription(ctx, queries, listID, memberNumber)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {

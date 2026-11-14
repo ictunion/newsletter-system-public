@@ -6,6 +6,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -22,6 +23,8 @@ type Querier interface {
 	// Listmonk subscription import: someone added in the Listmonk UI.
 	CreateNonMember(ctx context.Context, arg CreateNonMemberParams) (Subscriber, error)
 	CreateRule(ctx context.Context, arg CreateRuleParams) (SubscriptionRule, error)
+	// The database clock, for comparing with updated_at columns it sets.
+	DBNow(ctx context.Context) (time.Time, error)
 	DecidePendingChange(ctx context.Context, arg DecidePendingChangeParams) (PendingChange, error)
 	// Deletes a successful job unless it was enqueued again while it ran
 	// (updated_at moved), in which case it stays pending and runs again.
@@ -67,8 +70,10 @@ type Querier interface {
 	// GET /jobs: newest first, with the subscriber for display. status NULL
 	// means every status.
 	ListJobs(ctx context.Context, arg ListJobsParams) ([]ListJobsRow, error)
-	// Subscribed rows on a list whose subscriber is linked to Listmonk.
-	ListLinkedSubscribedOnList(ctx context.Context, listID pgtype.UUID) ([]ListLinkedSubscribedOnListRow, error)
+	// Subscribed rows on a list whose subscriber is linked to Listmonk, last
+	// changed before changed_before (a row changed later is newer than the
+	// Listmonk data it would be compared with).
+	ListLinkedSubscribedOnList(ctx context.Context, arg ListLinkedSubscribedOnListParams) ([]ListLinkedSubscribedOnListRow, error)
 	// GET /lists/{id}/subscribers: the list's subscriptions with their
 	// subscriber, by name. status NULL means every status. limit/offset paging
 	// with count(*) OVER () as the total.
@@ -102,6 +107,7 @@ type Querier interface {
 	RaisePendingChange(ctx context.Context, arg RaisePendingChangeParams) (int64, error)
 	// Dead job back to pending, due now, with a fresh attempt count.
 	RetryJob(ctx context.Context, id pgtype.UUID) (ProviderJob, error)
+	RuleExists(ctx context.Context, id pgtype.UUID) (bool, error)
 	SetListmonkStatus(ctx context.Context, arg SetListmonkStatusParams) error
 	// After the worker pushes changes: refresh Listmonk's count only. Creating
 	// lists and synced_at stay with the list sync.

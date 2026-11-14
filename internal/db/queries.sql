@@ -363,13 +363,23 @@ SELECT subscriber_id FROM provider_jobs WHERE kind = 'push_subscriber';
 SELECT listmonk_subscriber_id::int FROM provider_jobs WHERE kind = 'delete_subscriber';
 
 -- name: ListLinkedSubscribedOnList :many
--- Subscribed rows on a list whose subscriber is linked to Listmonk.
+-- Subscribed rows on a list whose subscriber is linked to Listmonk, last
+-- changed before changed_before (a row changed later is newer than the
+-- Listmonk data it would be compared with).
 SELECT subscriber.id, subscriber.listmonk_subscriber_id::int AS listmonk_subscriber_id
 FROM subscriptions AS subscription
 JOIN subscribers AS subscriber ON subscriber.id = subscription.subscriber_id
 WHERE subscription.list_id = sqlc.arg(list_id)
   AND subscription.status = 'subscribed'
-  AND subscriber.listmonk_subscriber_id IS NOT NULL;
+  AND subscriber.listmonk_subscriber_id IS NOT NULL
+  AND subscription.updated_at < sqlc.arg(changed_before)::timestamptz;
+
+-- name: RuleExists :one
+SELECT EXISTS (SELECT 1 FROM subscription_rules WHERE id = sqlc.arg(id));
+
+-- name: DBNow :one
+-- The database clock, for comparing with updated_at columns it sets.
+SELECT now()::timestamptz;
 
 -- name: DeleteUndetectedMemberChanges :execrows
 -- orca reconciliation, in its transaction: pending member and subscription

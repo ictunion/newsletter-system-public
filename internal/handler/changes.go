@@ -239,7 +239,8 @@ func changeErrorStatus(err error) (int, string) {
 		return http.StatusNotFound, "change not found"
 	case errors.Is(err, changes.ErrNotPending):
 		return http.StatusConflict, "change is already decided"
-	case errors.Is(err, members.ErrEmailTaken), errors.Is(err, members.ErrNotFound), errors.Is(err, members.ErrListNotFound):
+	case errors.Is(err, members.ErrEmailTaken), errors.Is(err, members.ErrNotFound), errors.Is(err, members.ErrListNotFound),
+		errors.Is(err, members.ErrRuleNotFound), errors.Is(err, changes.ErrStale):
 		return http.StatusConflict, err.Error()
 	}
 	return http.StatusInternalServerError, "failed to decide change"

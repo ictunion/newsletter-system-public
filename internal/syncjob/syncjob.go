@@ -126,7 +126,8 @@ func RunListmonkListSync(ctx context.Context, pool *pgxpool.Pool, client *listmo
 // step 4). Finally our 'subscribed' rows missing from Listmonk become
 // 'removed' (step 5). Subscribers with a push job (pending or dead) are
 // skipped, since our unsent change wins, and so are Listmonk subscribers
-// with a delete job, since we already deleted them.
+// with a delete job, since we already deleted them. Steps 4 and 5 skip rows
+// changed after the fetch began: they are newer than what was fetched.
 //
 // Each subscriber is imported in its own transaction, so the API is never
 // blocked for long; the run as a whole is not atomic, and rerunning it is safe.
@@ -146,6 +147,10 @@ func RunListmonkSubscriptionImport(ctx context.Context, pool *pgxpool.Pool, clie
 			return 0, 0, err
 		}
 
+		fetchStarted, err := queries.DBNow(ctx)
+		if err != nil {
+			return 0, 0, err
+		}
 		// Fetch everything before writing anything, so a failed fetch can't
 		// make step 5 remove rows.
 		subscribers := map[int]listmonk.Subscriber{}
@@ -174,7 +179,7 @@ func RunListmonkSubscriptionImport(ctx context.Context, pool *pgxpool.Pool, clie
 			}
 			var imported int
 			err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-				imported, err = importSubscriber(ctx, db.New(tx), subscriber, pushJobs)
+				imported, err = importSubscriber(ctx, db.New(tx), subscriber, pushJobs, fetchStarted)
 				return err
 			})
 			if err != nil {
@@ -184,7 +189,7 @@ func RunListmonkSubscriptionImport(ctx context.Context, pool *pgxpool.Pool, clie
 		}
 
 		for _, list := range linked {
-			rows, err := queries.ListLinkedSubscribedOnList(ctx, list.ID)
+			rows, err := queries.ListLinkedSubscribedOnList(ctx, db.ListLinkedSubscribedOnListParams{ListID: list.ID, ChangedBefore: fetchStarted})
 			if err != nil {
 				return len(subscribers), changes, err
 			}
@@ -203,7 +208,7 @@ func RunListmonkSubscriptionImport(ctx context.Context, pool *pgxpool.Pool, clie
 }
 
 // importSubscriber is flow 7 steps 1-4 and 6 for one Listmonk subscriber.
-func importSubscriber(ctx context.Context, queries *db.Queries, current listmonk.Subscriber, pushJobs []pgtype.UUID) (int, error) {
+func importSubscriber(ctx context.Context, queries *db.Queries, current listmonk.Subscriber, pushJobs []pgtype.UUID, fetchStarted time.Time) (int, error) {
 	listmonkID := int32(current.ID)
 	subscriber, err := queries.GetSubscriberByListmonkID(ctx, &listmonkID)
 	link := false
@@ -233,7 +238,7 @@ func importSubscriber(ctx context.Context, queries *db.Queries, current listmonk
 		}
 		changes++
 	}
-	imported, err := worker.ImportMemberships(ctx, queries, subscriber.ID, current, true)
+	imported, err := worker.ImportMemberships(ctx, queries, subscriber.ID, current, &fetchStarted)
 	return changes + imported, err
 }
 

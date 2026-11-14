@@ -142,8 +142,14 @@ func TestPush_Create(t *testing.T) {
 	if *rows[0].ListmonkStatus != "confirmed" {
 		t.Errorf("listmonk_status = %v", rows[0].ListmonkStatus)
 	}
-	lists, _ := f.queries.ListAllLists(context.Background())
+	lists, err := f.queries.ListAllLists(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, list := range lists {
+		if list.ListmonkID == nil {
+			t.Fatalf("list %s has no listmonk_id", list.Name)
+		}
 		want := map[int32]int32{1: 1, 2: 0}[*list.ListmonkID]
 		if list.ListmonkSubscriberCount == nil || *list.ListmonkSubscriberCount != want {
 			t.Errorf("list %d listmonk count = %v, want %d (refreshed after the push)", *list.ListmonkID, list.ListmonkSubscriberCount, want)

@@ -134,6 +134,22 @@ func TestApproveAndRejectChanges(t *testing.T) {
 	if code := approve(unknown).Code; code != http.StatusNotFound {
 		t.Errorf("unknown: code = %d, want 404", code)
 	}
+
+	// orca updated the member after detection: the older payload must not win.
+	stale := raise(t, pool, "member_updated", n(834), "", `{"member_number":834,"email":"jan@example.com","name":"Jan Novák","city":"Praha","lang":"cs","workplace_newsletter_id":null}`)
+	mustExec(t, pool, `UPDATE pending_changes SET detected_at = now() - interval '1 hour' WHERE id = $1`, stale)
+	recorder = approve(stale)
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "member changed") ||
+		count(t, pool, `SELECT count(*) FROM subscribers WHERE member_number = 834 AND city = 'Praha'`) != 0 {
+		t.Errorf("stale: %d %s", recorder.Code, recorder.Body)
+	}
+
+	// The rule a subscription_add came from was deleted meanwhile.
+	ruleGone := raise(t, pool, "subscription_add", n(834), listB, `{"source":"rule","rule_id":"00000000-0000-0000-0000-000000000001"}`)
+	recorder = approve(ruleGone)
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "rule not found") {
+		t.Errorf("rule gone: %d %s", recorder.Code, recorder.Body)
+	}
 }
 
 func TestListChanges(t *testing.T) {

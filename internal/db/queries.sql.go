@@ -185,6 +185,18 @@ func (q *Queries) CreateRule(ctx context.Context, arg CreateRuleParams) (Subscri
 	return i, err
 }
 
+const dBNow = `-- name: DBNow :one
+SELECT now()::timestamptz
+`
+
+// The database clock, for comparing with updated_at columns it sets.
+func (q *Queries) DBNow(ctx context.Context) (time.Time, error) {
+	row := q.db.QueryRow(ctx, dBNow)
+	var column_1 time.Time
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const decidePendingChange = `-- name: DecidePendingChange :one
 UPDATE pending_changes
 SET status = $1, decided_at = now(), decided_by = $2
@@ -817,16 +829,24 @@ JOIN subscribers AS subscriber ON subscriber.id = subscription.subscriber_id
 WHERE subscription.list_id = $1
   AND subscription.status = 'subscribed'
   AND subscriber.listmonk_subscriber_id IS NOT NULL
+  AND subscription.updated_at < $2::timestamptz
 `
+
+type ListLinkedSubscribedOnListParams struct {
+	ListID        pgtype.UUID `json:"list_id"`
+	ChangedBefore time.Time   `json:"changed_before"`
+}
 
 type ListLinkedSubscribedOnListRow struct {
 	ID                   pgtype.UUID `json:"id"`
 	ListmonkSubscriberID int32       `json:"listmonk_subscriber_id"`
 }
 
-// Subscribed rows on a list whose subscriber is linked to Listmonk.
-func (q *Queries) ListLinkedSubscribedOnList(ctx context.Context, listID pgtype.UUID) ([]ListLinkedSubscribedOnListRow, error) {
-	rows, err := q.db.Query(ctx, listLinkedSubscribedOnList, listID)
+// Subscribed rows on a list whose subscriber is linked to Listmonk, last
+// changed before changed_before (a row changed later is newer than the
+// Listmonk data it would be compared with).
+func (q *Queries) ListLinkedSubscribedOnList(ctx context.Context, arg ListLinkedSubscribedOnListParams) ([]ListLinkedSubscribedOnListRow, error) {
+	rows, err := q.db.Query(ctx, listLinkedSubscribedOnList, arg.ListID, arg.ChangedBefore)
 	if err != nil {
 		return nil, err
 	}
@@ -1451,6 +1471,17 @@ func (q *Queries) RetryJob(ctx context.Context, id pgtype.UUID) (ProviderJob, er
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const ruleExists = `-- name: RuleExists :one
+SELECT EXISTS (SELECT 1 FROM subscription_rules WHERE id = $1)
+`
+
+func (q *Queries) RuleExists(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, ruleExists, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const setListmonkStatus = `-- name: SetListmonkStatus :exec

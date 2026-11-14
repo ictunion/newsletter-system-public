@@ -219,7 +219,7 @@ func (w Worker) linkAndImport(ctx context.Context, subscriberID pgtype.UUID, cur
 		if err := queries.LinkListmonkSubscriber(ctx, db.LinkListmonkSubscriberParams{ID: subscriberID, ListmonkSubscriberID: &listmonkID}); err != nil {
 			return err
 		}
-		_, err := ImportMemberships(ctx, queries, subscriberID, current, false)
+		_, err := ImportMemberships(ctx, queries, subscriberID, current, nil)
 		return err
 	})
 }
@@ -230,11 +230,12 @@ func (w Worker) linkAndImport(ctx context.Context, subscriberID pgtype.UUID, cur
 // blocklisted subscriber) makes our row 'unsubscribed'; listmonk_status is
 // stored. Listmonk lists we don't have (yet) are skipped.
 //
-// full adds step 4 for the subscription import: a Listmonk membership on a
-// row we have as 'removed' (an admin re-added them in the Listmonk UI) makes
-// it 'subscribed'. The worker leaves it out, since there our unsent removal
-// wins. changes counts rows created or re-statused.
-func ImportMemberships(ctx context.Context, queries *db.Queries, subscriberID pgtype.UUID, current listmonk.Subscriber, full bool) (changes int, err error) {
+// reviveChangedBefore adds step 4 for the subscription import: a Listmonk
+// membership on a row we have as 'removed' (an admin re-added them in the
+// Listmonk UI) makes it 'subscribed', if the row was last changed before
+// then (a later removal is newer than current). The worker passes nil, since
+// there our unsent removal wins. changes counts rows created or re-statused.
+func ImportMemberships(ctx context.Context, queries *db.Queries, subscriberID pgtype.UUID, current listmonk.Subscriber, reviveChangedBefore *time.Time) (changes int, err error) {
 	lists, err := queries.ListAllLists(ctx)
 	if err != nil {
 		return 0, err
@@ -249,9 +250,9 @@ func ImportMemberships(ctx context.Context, queries *db.Queries, subscriberID pg
 	if err != nil {
 		return 0, err
 	}
-	ours := map[pgtype.UUID]string{}
+	ours := map[pgtype.UUID]db.ListSubscriptionsRow{}
 	for _, row := range rows {
-		ours[row.ListID] = row.Status
+		ours[row.ListID] = row
 	}
 
 	for _, membership := range current.Lists {
@@ -268,8 +269,8 @@ func ImportMemberships(ctx context.Context, queries *db.Queries, subscriberID pg
 		case !ok:
 			_, err = queries.InsertSubscription(ctx, db.InsertSubscriptionParams{SubscriberID: subscriberID, ListID: listID, Status: status, Source: "manual"})
 			changes++
-		case status == "unsubscribed" && existing != "unsubscribed",
-			full && status == "subscribed" && existing == "removed":
+		case status == "unsubscribed" && existing.Status != "unsubscribed",
+			reviveChangedBefore != nil && status == "subscribed" && existing.Status == "removed" && existing.UpdatedAt.Before(*reviveChangedBefore):
 			err = queries.SetSubscriptionStatus(ctx, db.SetSubscriptionStatusParams{SubscriberID: subscriberID, ListID: listID, Status: status})
 			changes++
 		}

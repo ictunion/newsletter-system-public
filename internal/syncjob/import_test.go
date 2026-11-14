@@ -83,6 +83,14 @@ func TestRunListmonkSubscriptionImport(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// An admin's add and removal made while the run fetches: the fetched
+	// Listmonk state is older, so neither may be undone.
+	lateAdd := member(8, "late-add@example.com", map[int32]string{1: "subscribed"}, "enabled", map[int]string{})
+	lateRemove := member(9, "late-remove@example.com", map[int32]string{1: "removed"}, "enabled", map[int]string{1: "confirmed"})
+	if _, err := pool.Exec(ctx, `UPDATE subscriptions SET updated_at = now() + interval '1 hour' WHERE subscriber_id IN ($1, $2)`, lateAdd, lateRemove); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := RunListmonkSubscriptionImport(ctx, pool, client); err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +107,8 @@ func TestRunListmonkSubscriptionImport(t *testing.T) {
 		{"blocklisted becomes unsubscribed", blocklisted, map[int32]string{1: "rule/unsubscribed", 2: "rule/unsubscribed"}},
 		{"pending push skipped", pending, map[int32]string{1: "rule/subscribed", 3: "rule/subscribed"}},
 		{"unlinked member matched by email", unlinked, map[int32]string{1: "rule/subscribed", 2: "manual/unsubscribed"}},
+		{"add after the fetch began is not removed", lateAdd, map[int32]string{1: "rule/subscribed"}},
+		{"removal after the fetch began is not revived", lateRemove, map[int32]string{1: "rule/removed"}},
 	}
 	for _, tt := range tests {
 		if got := states(tt.id); !maps.Equal(got, tt.want) {
@@ -128,7 +138,7 @@ func TestRunListmonkSubscriptionImport(t *testing.T) {
 	if jobs := count(t, pool, `SELECT count(*) FROM provider_jobs WHERE kind = 'push_subscriber'`); jobs != 1 {
 		t.Errorf("push jobs = %d, want only the pre-existing one", jobs)
 	}
-	if run := lastRun(t, pool); run.status != "succeeded" || run.fetched != 9 || run.changes == 0 {
+	if run := lastRun(t, pool); run.status != "succeeded" || run.fetched != 10 || run.changes == 0 {
 		t.Errorf("run = %+v", run)
 	}
 

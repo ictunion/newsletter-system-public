@@ -2,10 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type FormEvent, useState } from 'react'
 import { apiGet, apiSend, errMessage } from '../api/client'
 import type { ListsResponse, NewsletterList, Rule, RulesResponse } from '../api/types'
-import { ROLE_MANAGE_RULES, useHasRole } from '../roles'
 
 export function RulesPage() {
-  const canManage = useHasRole(ROLE_MANAGE_RULES)
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState<string>() // rule ID, or 'new'
   const rules = useQuery({ queryKey: ['rules'], queryFn: () => apiGet<RulesResponse>('/api/rules') })
@@ -45,7 +43,7 @@ export function RulesPage() {
             <th>Matches</th>
             <th>Enabled</th>
             <th>Note</th>
-            {canManage && <th />}
+            <th />
           </tr>
         </thead>
         <tbody>
@@ -65,30 +63,27 @@ export function RulesPage() {
                 <td>{rule.kind === 'all' ? 'all members' : `city contains "${rule.city_contains}"`}</td>
                 <td>{rule.enabled ? 'yes' : 'no'}</td>
                 <td>{rule.note}</td>
-                {canManage && (
-                  <td className="actions">
-                    <button onClick={() => setEditing(rule.id)}>Edit</button>
-                    <button
-                      disabled={remove.isPending}
-                      onClick={() => {
-                        if (window.confirm('Delete this rule? Subscriptions it created stay.')) remove.mutate(rule.id)
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                )}
+                <td className="actions">
+                  <button onClick={() => setEditing(rule.id)}>Edit</button>
+                  <button
+                    disabled={remove.isPending}
+                    onClick={() => {
+                      if (window.confirm('Delete this rule? Subscriptions it created stay.')) remove.mutate(rule.id)
+                    }}
+                  >
+                    Delete
+                  </button>
+                </td>
               </tr>
             ),
           )}
         </tbody>
       </table>
-      {canManage &&
-        (editing === 'new' ? (
-          <RuleForm lists={lists.data?.lists ?? []} onDone={() => setEditing(undefined)} />
-        ) : (
-          <button onClick={() => setEditing('new')}>New rule</button>
-        ))}
+      {editing === 'new' ? (
+        <RuleForm lists={lists.data?.lists ?? []} onDone={() => setEditing(undefined)} />
+      ) : (
+        <button onClick={() => setEditing('new')}>New rule</button>
+      )}
     </>
   )
 }

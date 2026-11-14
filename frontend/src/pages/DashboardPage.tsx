@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiGet, apiSend, errMessage } from '../api/client'
 import type { ListsResponse, Page, SyncRun, SyncRunsResponse } from '../api/types'
@@ -17,25 +17,42 @@ export function DashboardPage() {
   const lists = useQuery({ queryKey: ['lists'], queryFn: () => apiGet<ListsResponse>('/api/lists') })
   const canManage = useHasRole(ROLE_MANAGE_NEWSLETTERS)
   const queryClient = useQueryClient()
+  // Kind → ID of its newest run when "Run now" was clicked (null: none yet).
+  // The 202 can come before the new run's row exists, or after it finished,
+  // so poll until a newer run of that kind has finished.
+  // shortcut: polls while the page is open if the run never starts (the server logs why).
+  const [awaiting, setAwaiting] = useState<Partial<Record<SyncRun['kind'], string | null>>>({})
   const runs = useQuery({
     queryKey: ['sync-runs'],
     queryFn: () => apiGet<SyncRunsResponse>('/api/sync-runs'),
     // Poll while a sync runs, so its result shows up without a reload.
-    refetchInterval: (query) => (query.state.data?.runs.some((run) => run.status === 'running') ? 2000 : false),
+    refetchInterval: (query) =>
+      query.state.data?.runs.some((run) => run.status === 'running') || Object.keys(awaiting).length > 0 ? 2000 : false,
   })
+  // Runs are newest first per kind.
+  const newest = (kind: SyncRun['kind']) => runs.data?.runs.find((run) => run.kind === kind)
   const trigger = useMutation({
-    mutationFn: (kind: SyncRun['kind']) => apiSend('POST', `/api/sync-runs/${kind}`),
+    mutationFn: ({ kind }: { kind: SyncRun['kind']; previousID: string | null }) =>
+      apiSend('POST', `/api/sync-runs/${kind}`),
+    onSuccess: (_, { kind, previousID }) => setAwaiting((current) => ({ ...current, [kind]: previousID })),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['sync-runs'] }),
   })
   // When a run finishes, the data it synced is new: refresh everything else.
   const running = runs.data?.runs.some((run) => run.status === 'running') ?? false
   const wasRunning = useRef(false)
   useEffect(() => {
-    if (wasRunning.current && !running) {
+    const done = (Object.keys(awaiting) as SyncRun['kind'][]).filter((kind) => {
+      const last = runs.data?.runs.find((run) => run.kind === kind)
+      return last && last.id !== awaiting[kind] && last.status !== 'running'
+    })
+    if ((wasRunning.current && !running) || done.length > 0) {
       void queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] !== 'sync-runs' })
     }
+    if (done.length > 0) {
+      setAwaiting((current) => Object.fromEntries(Object.entries(current).filter(([kind]) => !done.includes(kind as SyncRun['kind']))))
+    }
     wasRunning.current = running
-  }, [running, queryClient])
+  }, [runs.data, awaiting, running, queryClient])
   // Only the totals are needed: one item per request.
   const pendingChanges = useQuery({
     queryKey: ['changes', 'pending-count'],
@@ -72,8 +89,7 @@ export function DashboardPage() {
           </thead>
           <tbody>
             {SYNC_KINDS.map(({ kind, label }) => {
-              // Runs are newest first per kind.
-              const last = runs.data?.runs.find((run) => run.kind === kind)
+              const last = newest(kind)
               return (
                 <tr key={kind}>
                   <td>{label}</td>
@@ -85,8 +101,8 @@ export function DashboardPage() {
                   {canManage && (
                     <td>
                       <button
-                        disabled={last?.status === 'running' || (trigger.isPending && trigger.variables === kind)}
-                        onClick={() => trigger.mutate(kind)}
+                        disabled={last?.status === 'running' || (trigger.isPending && trigger.variables.kind === kind)}
+                        onClick={() => trigger.mutate({ kind, previousID: last?.id ?? null })}
                       >
                         {last?.status === 'running' ? 'Running…' : 'Run now'}
                       </button>

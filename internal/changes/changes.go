@@ -20,6 +20,9 @@ import (
 var (
 	ErrNotFound   = errors.New("change not found")
 	ErrNotPending = errors.New("change is already decided")
+	// ErrStale: the member was updated after the change was detected, so its
+	// payload is older than what we store. The next reconciliation re-checks.
+	ErrStale = errors.New("member changed since the change was detected")
 )
 
 // Approve applies the pending change and marks it approved by decidedBy (a
@@ -66,7 +69,11 @@ func apply(ctx context.Context, queries *db.Queries, service members.Service, ch
 			_, err := service.Create(ctx, queries, member)
 			return err
 		}
-		_, err := service.Update(ctx, queries, member)
+		subscriber, err := queries.GetSubscriberByMemberNumber(ctx, &member.MemberNumber)
+		if err == nil && subscriber.UpdatedAt.After(change.DetectedAt) {
+			return ErrStale
+		}
+		_, err = service.Update(ctx, queries, member)
 		return err
 	case syncjob.ChangeMemberRemoved:
 		return service.Delete(ctx, queries, *change.MemberNumber)
