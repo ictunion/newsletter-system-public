@@ -37,11 +37,13 @@ func TestListSyncRuns(t *testing.T) {
 	}
 }
 
+type appContextKey struct{}
+
 func TestTriggerSync(t *testing.T) {
 	queries := dbtest.Tx(t)
 	ran := make(chan context.Context, 1)
 	syncs := Syncs{"listmonk_lists": func(ctx context.Context) error { ran <- ctx; return nil }}
-	appContext := context.WithValue(context.Background(), struct{}{}, "app")
+	appContext := context.WithValue(context.Background(), appContextKey{}, "app")
 
 	trigger := func(kind string) int {
 		recorder := httptest.NewRecorder()
@@ -59,7 +61,7 @@ func TestTriggerSync(t *testing.T) {
 	}
 	select {
 	case ctx := <-ran:
-		if ctx.Value(struct{}{}) != "app" {
+		if ctx.Value(appContextKey{}) != "app" {
 			t.Error("sync did not run under the app context")
 		}
 	case <-time.After(5 * time.Second):

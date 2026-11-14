@@ -23,9 +23,18 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
+
+// minRefreshInterval spaces out JWKS refreshes triggered by unknown kids, so
+// tokens with made-up kids (sent by anyone, before any signature check)
+// can't make every request call Keycloak.
+const minRefreshInterval = time.Minute
+
+// jwksClient bounds a JWKS fetch, so a slow Keycloak can't hang requests.
+var jwksClient = &http.Client{Timeout: 10 * time.Second}
 
 // Role is one of newsletter-system's own Keycloak client roles — the roles
 // this service's endpoints require, looked up under `resource_access[client_id]`
@@ -94,8 +103,9 @@ type Provider struct {
 	clientID string
 	jwksURL  string
 
-	mutex sync.Mutex
-	keys  map[string]*rsa.PublicKey // Keycloak key ID (kid) -> RSA public key
+	mutex       sync.Mutex
+	keys        map[string]*rsa.PublicKey // Keycloak key ID (kid) -> RSA public key
+	lastRefresh time.Time                 // last refresh started by keyFor
 }
 
 type jwksResponse struct {
@@ -132,11 +142,11 @@ func NewProvider(host, realm, clientID string) (*Provider, error) {
 // cache — the latter is what lets a live Keycloak key rotation take effect
 // without restarting this process.
 func (p *Provider) refreshKeys() error {
-	response, err := http.Get(p.jwksURL)
+	response, err := jwksClient.Get(p.jwksURL)
 	if err != nil {
 		return fmt.Errorf("fetching keycloak JWKS: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("fetching keycloak JWKS: unexpected status %d", response.StatusCode)
@@ -169,13 +179,21 @@ func (p *Provider) refreshKeys() error {
 }
 
 // keyFor returns the cached public key for kid, refreshing the JWKS once
-// and retrying on a cache miss before giving up — see refreshKeys.
+// and retrying on a cache miss before giving up — see refreshKeys. At most
+// one refresh per minRefreshInterval; a miss in between fails right away.
 func (p *Provider) keyFor(kid string) (*rsa.PublicKey, error) {
 	p.mutex.Lock()
 	key, ok := p.keys[kid]
+	tooSoon := time.Since(p.lastRefresh) < minRefreshInterval
+	if !ok && !tooSoon {
+		p.lastRefresh = time.Now()
+	}
 	p.mutex.Unlock()
 	if ok {
 		return key, nil
+	}
+	if tooSoon {
+		return nil, fmt.Errorf("no signature key found for kid %q (JWKS refreshed less than %s ago)", kid, minRefreshInterval)
 	}
 
 	if err := p.refreshKeys(); err != nil {
@@ -282,7 +300,7 @@ func (p *Provider) UserGroupIDs(requestContext context.Context, tokenString stri
 	if err != nil {
 		return nil, fmt.Errorf("fetching keycloak account groups: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetching keycloak account groups: unexpected status %d", response.StatusCode)
 	}

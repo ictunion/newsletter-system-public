@@ -120,7 +120,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	if err != nil {
 		return fmt.Errorf("listmonk %s %s: %w", method, path, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		var failure struct {

@@ -79,7 +79,7 @@ migrate-test:
 # still using), so all packages sharing this DB must run serially.
 .PHONY: test
 test: db-test-init migrate-test
-	TEST_DATABASE_URL="postgres://$(DB_USER):$(DB_PASSWORD)@localhost:$(DB_PORT)/$(DB_TEST_NAME)?sslmode=disable" go test -p 1 ./...
+	TEST_DATABASE_URL="postgres://$(DB_USER):$(DB_PASSWORD)@localhost:$(DB_PORT)/$(DB_TEST_NAME)?sslmode=disable" go test -p 1 ./cmd/... ./internal/...
 
 .PHONY: start
 start:

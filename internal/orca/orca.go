@@ -37,7 +37,7 @@ func (c *Client) ListMembers(ctx context.Context) ([]members.Member, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetching orca members: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetching orca members: unexpected status %d", response.StatusCode)
 	}
