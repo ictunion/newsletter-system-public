@@ -131,21 +131,21 @@ For every task that adds routes:
 **Done when:** tests cover approving each kind, reject, and bulk approve.
 
 ## 14. Frontend: dashboard and lists
-- [ ] Dashboard: lists with our count next to Listmonk's, the last run per sync kind, the pending-changes count and the dead-jobs count.
-- [ ] Lists page: visibility toggle, and a subscribers view per list.
+- [x] Dashboard: lists with our count next to Listmonk's, the last run per sync kind, the pending-changes count and the dead-jobs count.
+- [x] Lists page: visibility toggle, and a subscribers view per list.
 
 **Done when:** it works against a local API with real data. Nav items are hidden by `useHasRole`.
 
 ## 15. Frontend: member lookup
-- [ ] Search by `member_number`. Show member data and every list with its status, source and rule.
-- [ ] Add and remove a member on a list, and delete a member (with confirmation).
+- [x] Search by `member_number`. Show member data and every list with its status, source and rule.
+- [x] Add and remove a member on a list, and delete a member (with confirmation).
 
 **Done when:** it works against a local API.
 
 ## 16. Frontend: changes, jobs and rules
-- [ ] Pending changes: kind filter, approve or reject one, bulk approve.
-- [ ] Dead jobs: last error, attempt count, retry.
-- [ ] Rules: list, create, edit, delete.
+- [x] Pending changes: kind filter, approve or reject one, bulk approve.
+- [x] Dead jobs: last error, attempt count, retry.
+- [x] Rules: list, create, edit, delete.
 
 **Done when:** it works against a local API.
 
