@@ -223,7 +223,7 @@ The transaction is short. The Listmonk HTTP call happens **outside** it: claim t
 
 **One push job per subscriber.** Enqueueing a push while one is pending touches it (due now, new `updated_at`). The worker deletes a finished job only if `updated_at` still matches its claim, so a change made while the job ran is pushed in another run. Enqueueing also replaces a `dead` push for the same subscriber.
 
-**Listmonk opt-outs win over an unsent push.** Before pushing to a linked subscriber, the worker reads them from Listmonk and imports their memberships (flow 7 steps 2, 3 and 6): a Listmonk opt-out makes our row `unsubscribed`, so `add` never resubscribes someone whose opt-out the 15-minute import hasn't seen yet. Step 4 (Listmonk subscribed, our row `removed`) is not applied here, because our unsent removal wins. A subscriber deleted in the Listmonk UI is unlinked, and the next attempt creates them again.
+**Listmonk opt-outs win over an unsent push.** Before pushing to a linked subscriber, the worker reads them from Listmonk and imports their memberships (flow 7 steps 2, 3 and 6): a Listmonk opt-out makes our row `unsubscribed`, so `add` never resubscribes someone whose opt-out the 12-hourly import hasn't seen yet. Step 4 (Listmonk subscribed, our row `removed`) is not applied here, because our unsent removal wins. A subscriber deleted in the Listmonk UI is unlinked, and the next attempt creates them again.
 
 **The worker only acts on lists we have a row for.** It never removes a Listmonk membership we don't know about. This protects lists an admin just added in the Listmonk UI before the next import.
 
@@ -245,16 +245,18 @@ The transaction is short. The Listmonk HTTP call happens **outside** it: claim t
 
 Dead jobs show up in the frontend. `POST /jobs/{id}/retry` resets them to `pending`.
 
-### 6. Listmonk list sync (every 15m, plus once at startup, non-blocking)
+### 6. Listmonk list sync (every 12h, plus once at startup, non-blocking)
 - `GET /api/lists?per_page=all`, upserted by `listmonk_id`. A list that reappears gets `deleted_at` cleared.
 - `name`, `description` and `listmonk_subscriber_count` are copied on every sync. `visibility` is never touched.
 - New Listmonk lists are created here automatically, as `private`.
 - A list we have but Listmonk no longer returns is **not** soft-deleted automatically. The sync raises a `list_removed` pending change. Approving it sets `deleted_at`.
 
-### 7. Listmonk subscription import (every 15m, after the list sync)
+### 7. Listmonk subscription import (every 12h, after the list sync)
+Live changes come straight from orca (and later member self-service), so this runs only every 12 hours. Its main job is picking up people's own opt-outs in Listmonk. `POST /sync-runs/{kind}` runs it on demand.
+
 This makes Listmonk UI changes and member opt-outs part of our state.
 
-For each linked list, `GET /api/subscribers?list_id=X&per_page=all`. Skip any subscriber with a pending or dead push job, because our unsent change wins. For the rest:
+For each linked list, `GET /api/subscribers?list_id=X&per_page=all`. Skip any subscriber with a pending or dead push job, because our unsent change wins. Also skip Listmonk subscribers with a pending or dead `delete_subscriber` job: we already deleted them, and importing would recreate them. Each subscriber is imported in its own transaction. For the rest:
 1. **Find the subscriber.** Match by `listmonk_subscriber_id`, then by email (and link it). Otherwise create a non-member subscriber from Listmonk's name and email.
 2. **Membership in Listmonk with no row here** (an admin added them in the Listmonk UI): insert it with `source = 'manual'` and the status mapped from Listmonk.
 3. **Listmonk `unsubscribed`, or a `blocklisted` subscriber:** set our row to `unsubscribed`. This is the person's own opt-out and needs no approval.

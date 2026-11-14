@@ -8,21 +8,25 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/kubik/newsletter-system/internal/db"
 	"github.com/kubik/newsletter-system/internal/listmonk"
+	"github.com/kubik/newsletter-system/internal/worker"
 )
 
 // Kind is a sync_runs.kind.
 type Kind string
 
 const (
-	KindListmonkLists Kind = "listmonk_lists"
+	KindListmonkLists         Kind = "listmonk_lists"
+	KindListmonkSubscriptions Kind = "listmonk_subscriptions"
 )
 
 // ErrAlreadyRunning is returned when a run of the same kind is still running.
@@ -113,6 +117,124 @@ func RunListmonkListSync(ctx context.Context, pool *pgxpool.Pool, client *listmo
 		})
 		return len(lists), changes, err
 	})
+}
+
+// RunListmonkSubscriptionImport makes Listmonk UI changes and people's own
+// opt-outs part of our state (flow 7). For every subscriber on a linked list:
+// find ours by Listmonk ID, then by email (and link), else create a
+// non-member; then import their memberships (worker.ImportMemberships with
+// step 4). Finally our 'subscribed' rows missing from Listmonk become
+// 'removed' (step 5). Subscribers with a push job (pending or dead) are
+// skipped, since our unsent change wins, and so are Listmonk subscribers
+// with a delete job, since we already deleted them.
+//
+// Each subscriber is imported in its own transaction, so the API is never
+// blocked for long; the run as a whole is not atomic, and rerunning it is safe.
+func RunListmonkSubscriptionImport(ctx context.Context, pool *pgxpool.Pool, client *listmonk.Client) error {
+	return record(ctx, pool, KindListmonkSubscriptions, func(ctx context.Context) (int, int, error) {
+		queries := db.New(pool)
+		lists, err := queries.ListAllLists(ctx)
+		if err != nil {
+			return 0, 0, err
+		}
+		pushJobs, err := queries.ListSubscriberIDsWithPushJobs(ctx)
+		if err != nil {
+			return 0, 0, err
+		}
+		deleteJobs, err := queries.ListListmonkIDsWithDeleteJobs(ctx)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		// Fetch everything before writing anything, so a failed fetch can't
+		// make step 5 remove rows.
+		subscribers := map[int]listmonk.Subscriber{}
+		members := map[pgtype.UUID]map[int32]bool{} // our list ID -> Listmonk subscriber IDs on it
+		var linked []db.NewsletterList
+		for _, list := range lists {
+			if list.ListmonkID == nil || list.DeletedAt.Valid {
+				continue
+			}
+			linked = append(linked, list)
+			onList, err := client.ListSubscribersByList(ctx, int(*list.ListmonkID))
+			if err != nil {
+				return 0, 0, err
+			}
+			members[list.ID] = map[int32]bool{}
+			for _, subscriber := range onList {
+				subscribers[subscriber.ID] = subscriber
+				members[list.ID][int32(subscriber.ID)] = true
+			}
+		}
+
+		changes := 0
+		for _, subscriber := range subscribers {
+			if slices.Contains(deleteJobs, int32(subscriber.ID)) {
+				continue
+			}
+			var imported int
+			err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+				imported, err = importSubscriber(ctx, db.New(tx), subscriber, pushJobs)
+				return err
+			})
+			if err != nil {
+				return len(subscribers), changes, fmt.Errorf("importing listmonk subscriber %d: %w", subscriber.ID, err)
+			}
+			changes += imported
+		}
+
+		for _, list := range linked {
+			rows, err := queries.ListLinkedSubscribedOnList(ctx, list.ID)
+			if err != nil {
+				return len(subscribers), changes, err
+			}
+			for _, row := range rows {
+				if members[list.ID][row.ListmonkSubscriberID] || slices.Contains(pushJobs, row.ID) {
+					continue
+				}
+				if err := queries.SetSubscriptionStatus(ctx, db.SetSubscriptionStatusParams{SubscriberID: row.ID, ListID: list.ID, Status: "removed"}); err != nil {
+					return len(subscribers), changes, err
+				}
+				changes++
+			}
+		}
+		return len(subscribers), changes, nil
+	})
+}
+
+// importSubscriber is flow 7 steps 1-4 and 6 for one Listmonk subscriber.
+func importSubscriber(ctx context.Context, queries *db.Queries, current listmonk.Subscriber, pushJobs []pgtype.UUID) (int, error) {
+	listmonkID := int32(current.ID)
+	subscriber, err := queries.GetSubscriberByListmonkID(ctx, &listmonkID)
+	link := false
+	if errors.Is(err, pgx.ErrNoRows) {
+		subscriber, err = queries.GetSubscriberByEmail(ctx, current.Email)
+		link = err == nil
+		if link && subscriber.ListmonkSubscriberID != nil {
+			log.Printf("sync: listmonk subscriber %d has the email of our subscriber %s, linked to listmonk %d; skipped",
+				current.ID, subscriber.ID, *subscriber.ListmonkSubscriberID)
+			return 0, nil
+		}
+	}
+	changes := 0
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		if subscriber, err = queries.CreateNonMember(ctx, db.CreateNonMemberParams{Email: current.Email, Name: current.Name, ListmonkSubscriberID: &listmonkID}); err != nil {
+			return 0, err
+		}
+		changes++
+	case err != nil:
+		return 0, err
+	case slices.Contains(pushJobs, subscriber.ID):
+		return 0, nil
+	case link:
+		if err := queries.LinkListmonkSubscriber(ctx, db.LinkListmonkSubscriberParams{ID: subscriber.ID, ListmonkSubscriberID: &listmonkID}); err != nil {
+			return 0, err
+		}
+		changes++
+	}
+	imported, err := worker.ImportMemberships(ctx, queries, subscriber.ID, current, true)
+	return changes + imported, err
 }
 
 // Every runs fn now and then every interval, until ctx is done. It blocks;

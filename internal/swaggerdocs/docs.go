@@ -1375,7 +1375,8 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "enum": [
-                            "listmonk_lists"
+                            "listmonk_lists",
+                            "listmonk_subscriptions"
                         ],
                         "type": "string",
                         "description": "Sync kind",

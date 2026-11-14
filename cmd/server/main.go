@@ -72,9 +72,18 @@ func main() {
 		syncs[string(syncjob.KindListmonkLists)] = func(ctx context.Context) error {
 			return syncjob.RunListmonkListSync(ctx, pool, listmonkClient)
 		}
-		go syncjob.Every(requestContext, 15*time.Minute, func(ctx context.Context) {
-			if err := syncs[string(syncjob.KindListmonkLists)](ctx); err != nil {
-				log.Printf("sync: listmonk lists: %v", err)
+		syncs[string(syncjob.KindListmonkSubscriptions)] = func(ctx context.Context) error {
+			return syncjob.RunListmonkSubscriptionImport(ctx, pool, listmonkClient)
+		}
+		// Every 12h: live changes come straight from orca (and later member
+		// self-service); this mainly picks up people's own opt-outs in
+		// Listmonk. The subscription import runs after the list sync, so it
+		// sees new lists.
+		go syncjob.Every(requestContext, 12*time.Hour, func(ctx context.Context) {
+			for _, kind := range []syncjob.Kind{syncjob.KindListmonkLists, syncjob.KindListmonkSubscriptions} {
+				if err := syncs[string(kind)](ctx); err != nil {
+					log.Printf("sync: %s: %v", kind, err)
+				}
 			}
 		})
 		go syncjob.Every(requestContext, worker.PollInterval, worker.Worker{Pool: pool, Listmonk: listmonkClient}.RunDue)

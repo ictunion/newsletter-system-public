@@ -191,7 +191,8 @@ func (w Worker) linkAndImport(ctx context.Context, subscriberID pgtype.UUID, cur
 		if err := queries.LinkListmonkSubscriber(ctx, db.LinkListmonkSubscriberParams{ID: subscriberID, ListmonkSubscriberID: &listmonkID}); err != nil {
 			return err
 		}
-		return ImportMemberships(ctx, queries, subscriberID, current)
+		_, err := ImportMemberships(ctx, queries, subscriberID, current, false)
+		return err
 	})
 }
 
@@ -200,10 +201,15 @@ func (w Worker) linkAndImport(ctx context.Context, subscriberID pgtype.UUID, cur
 // becomes a 'manual' row; a Listmonk opt-out (unsubscribed, or a
 // blocklisted subscriber) makes our row 'unsubscribed'; listmonk_status is
 // stored. Listmonk lists we don't have (yet) are skipped.
-func ImportMemberships(ctx context.Context, queries *db.Queries, subscriberID pgtype.UUID, current listmonk.Subscriber) error {
+//
+// full adds step 4 for the subscription import: a Listmonk membership on a
+// row we have as 'removed' (an admin re-added them in the Listmonk UI) makes
+// it 'subscribed'. The worker leaves it out, since there our unsent removal
+// wins. changes counts rows created or re-statused.
+func ImportMemberships(ctx context.Context, queries *db.Queries, subscriberID pgtype.UUID, current listmonk.Subscriber, full bool) (changes int, err error) {
 	lists, err := queries.ListAllLists(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	byListmonkID := map[int]pgtype.UUID{}
 	for _, list := range lists {
@@ -213,7 +219,7 @@ func ImportMemberships(ctx context.Context, queries *db.Queries, subscriberID pg
 	}
 	rows, err := queries.ListSubscriptions(ctx, subscriberID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	ours := map[pgtype.UUID]string{}
 	for _, row := range rows {
@@ -229,21 +235,25 @@ func ImportMemberships(ctx context.Context, queries *db.Queries, subscriberID pg
 		if membership.SubscriptionStatus == "unsubscribed" || current.Status == "blocklisted" {
 			status = "unsubscribed"
 		}
-		switch existing, ok := ours[listID]; {
+		existing, ok := ours[listID]
+		switch {
 		case !ok:
 			_, err = queries.InsertSubscription(ctx, db.InsertSubscriptionParams{SubscriberID: subscriberID, ListID: listID, Status: status, Source: "manual"})
-		case status == "unsubscribed" && existing != "unsubscribed":
+			changes++
+		case status == "unsubscribed" && existing != "unsubscribed",
+			full && status == "subscribed" && existing == "removed":
 			err = queries.SetSubscriptionStatus(ctx, db.SetSubscriptionStatusParams{SubscriberID: subscriberID, ListID: listID, Status: status})
+			changes++
 		}
 		if err != nil {
-			return err
+			return 0, err
 		}
 		listmonkStatus := membership.SubscriptionStatus
 		if err := queries.SetListmonkStatus(ctx, db.SetListmonkStatusParams{SubscriberID: subscriberID, ListID: listID, ListmonkStatus: &listmonkStatus}); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return changes, nil
 }
 
 // listmonkIDs returns the Listmonk list IDs of rows in status, skipping

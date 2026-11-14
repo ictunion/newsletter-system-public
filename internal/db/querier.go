@@ -19,6 +19,8 @@ type Querier interface {
 	// POST/PUT/PATCH/DELETE request, after the handler has responded.
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
 	CreateMember(ctx context.Context, arg CreateMemberParams) (Subscriber, error)
+	// Listmonk subscription import: someone added in the Listmonk UI.
+	CreateNonMember(ctx context.Context, arg CreateNonMemberParams) (Subscriber, error)
 	CreateRule(ctx context.Context, arg CreateRuleParams) (SubscriptionRule, error)
 	// Deletes a successful job unless it was enqueued again while it ran
 	// (updated_at moved), in which case it stays pending and runs again.
@@ -44,6 +46,7 @@ type Querier interface {
 	GetList(ctx context.Context, id pgtype.UUID) (NewsletterList, error)
 	GetSubscriber(ctx context.Context, id pgtype.UUID) (Subscriber, error)
 	GetSubscriberByEmail(ctx context.Context, email string) (Subscriber, error)
+	GetSubscriberByListmonkID(ctx context.Context, listmonkSubscriberID *int32) (Subscriber, error)
 	GetSubscriberByMemberNumber(ctx context.Context, memberNumber *int32) (Subscriber, error)
 	GetSubscription(ctx context.Context, arg GetSubscriptionParams) (Subscription, error)
 	// Creates a row only; an existing row for the list is left alone.
@@ -59,10 +62,14 @@ type Querier interface {
 	// GET /jobs: newest first, with the subscriber for display. status NULL
 	// means every status.
 	ListJobs(ctx context.Context, arg ListJobsParams) ([]ListJobsRow, error)
+	// Subscribed rows on a list whose subscriber is linked to Listmonk.
+	ListLinkedSubscribedOnList(ctx context.Context, listID pgtype.UUID) ([]ListLinkedSubscribedOnListRow, error)
 	// GET /lists/{id}/subscribers: the list's subscriptions with their
 	// subscriber, by name. status NULL means every status. limit/offset paging
 	// with count(*) OVER () as the total.
 	ListListSubscribers(ctx context.Context, arg ListListSubscribersParams) ([]ListListSubscribersRow, error)
+	// Listmonk subscribers we deleted but Listmonk still has until the job runs.
+	ListListmonkIDsWithDeleteJobs(ctx context.Context) ([]int32, error)
 	// Active Listmonk-linked lists that Listmonk no longer returned.
 	ListMissingListmonkLists(ctx context.Context, seenListmonkIds []int32) ([]ListMissingListmonkListsRow, error)
 	// GET /lists: every list with our subscription counts per status. Deleted
@@ -72,6 +79,8 @@ type Querier interface {
 	// GET /sync-runs: the latest runs of each kind, newest first.
 	ListRecentSyncRuns(ctx context.Context, perKind int32) ([]SyncRun, error)
 	ListRules(ctx context.Context) ([]SubscriptionRule, error)
+	// Subscribers whose unsent (pending or dead) push wins over Listmonk's state.
+	ListSubscriberIDsWithPushJobs(ctx context.Context) ([]pgtype.UUID, error)
 	// A subscriber's subscriptions with their list, for responses and applyMember.
 	ListSubscriptions(ctx context.Context, subscriberID pgtype.UUID) ([]ListSubscriptionsRow, error)
 	// Raises a change, or refreshes the payload of the same pending change

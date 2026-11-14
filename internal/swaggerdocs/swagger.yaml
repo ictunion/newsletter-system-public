@@ -1311,6 +1311,7 @@ paths:
       - description: Sync kind
         enum:
         - listmonk_lists
+        - listmonk_subscriptions
         in: path
         name: kind
         required: true

@@ -54,7 +54,7 @@ For every task that adds routes:
   - sync-run bookkeeping
   - `FailStaleRuns` at startup
   - `RunListmonkListSync`: upsert by `listmonk_id`, clear `deleted_at` when a list reappears, create new lists as `private`, raise a `list_removed` pending change for missing lists
-- [x] Scheduler goroutine in `main.go`: every 15m plus once at startup, non-blocking. It runs only when Listmonk is configured.
+- [x] Scheduler goroutine in `main.go`: every 12h plus once at startup, non-blocking. It runs only when Listmonk is configured.
 
 **Done when:** tests against a fake Listmonk cover upsert, reappear and `list_removed`, and a real sync fills `newsletter_lists`.
 
@@ -111,8 +111,8 @@ For every task that adds routes:
 **Done when:** tests against a fake Listmonk cover create, link that keeps opt-outs, unknown Listmonk lists never removed, backoff to `dead`, a `404` on delete counting as success, and retry.
 
 ## 11. Listmonk subscription import (flow 7)
-- [ ] `RunListmonkSubscriptionImport`, scheduled after the list sync. It follows flow 7's steps 1–6 and skips subscribers that have a pending or dead job.
-- [ ] Add `listmonk_subscriptions` to `POST /sync-runs/{kind}`.
+- [x] `RunListmonkSubscriptionImport`, scheduled after the list sync. It follows flow 7's steps 1–6 and skips subscribers that have a pending or dead job.
+- [x] Add `listmonk_subscriptions` to `POST /sync-runs/{kind}`.
 
 **Done when:** tests cover a Listmonk UI add becoming `manual`, a non-member being created, an opt-out becoming `unsubscribed`, re-add and removal, the skip on pending jobs, and blocklisted subscribers.
 

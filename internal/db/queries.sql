@@ -346,3 +346,29 @@ RETURNING *;
 
 -- name: GetJob :one
 SELECT * FROM provider_jobs WHERE id = sqlc.arg(id);
+
+-- name: GetSubscriberByListmonkID :one
+SELECT * FROM subscribers WHERE listmonk_subscriber_id = sqlc.arg(listmonk_subscriber_id);
+
+-- name: CreateNonMember :one
+-- Listmonk subscription import: someone added in the Listmonk UI.
+INSERT INTO subscribers (email, name, listmonk_subscriber_id)
+VALUES (sqlc.arg(email), sqlc.arg(name), sqlc.arg(listmonk_subscriber_id))
+RETURNING *;
+
+-- name: ListSubscriberIDsWithPushJobs :many
+-- Subscribers whose unsent (pending or dead) push wins over Listmonk's state.
+SELECT subscriber_id FROM provider_jobs WHERE kind = 'push_subscriber';
+
+-- name: ListListmonkIDsWithDeleteJobs :many
+-- Listmonk subscribers we deleted but Listmonk still has until the job runs.
+SELECT listmonk_subscriber_id::int FROM provider_jobs WHERE kind = 'delete_subscriber';
+
+-- name: ListLinkedSubscribedOnList :many
+-- Subscribed rows on a list whose subscriber is linked to Listmonk.
+SELECT subscriber.id, subscriber.listmonk_subscriber_id::int AS listmonk_subscriber_id
+FROM subscriptions AS subscription
+JOIN subscribers AS subscriber ON subscriber.id = subscription.subscriber_id
+WHERE subscription.list_id = sqlc.arg(list_id)
+  AND subscription.status = 'subscribed'
+  AND subscriber.listmonk_subscriber_id IS NOT NULL;

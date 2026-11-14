@@ -66,7 +66,7 @@ type Syncs map[string]func(context.Context) error
 // @Description  Requires the manage-newsletters role. Starts the sync in the background and answers 202; the run shows up in GET /sync-runs. 404 for an unknown kind or one whose provider is not configured, 409 while a run of that kind is still running.
 // @Tags         sync-runs
 // @Security     BearerAuth
-// @Param        kind  path  string  true  "Sync kind"  Enums(listmonk_lists)
+// @Param        kind  path  string  true  "Sync kind"  Enums(listmonk_lists, listmonk_subscriptions)
 // @Success      202
 // @Failure      401,403,404,409  {object}  map[string]string
 // @Router       /sync-runs/{kind} [post]
