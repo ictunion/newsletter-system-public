@@ -21,9 +21,13 @@
 -- status_code is the response status: a rejected request (400, 403 from a
 -- handler-level role check, 409, ...) is still recorded as an attempt, so
 -- filter on 2xx for changes that actually took effect.
+--
+-- created_at uses clock_timestamp(), not now(), so rows written in one
+-- transaction still order by write time; id (a random UUID) only breaks
+-- exact ties.
 CREATE TABLE audit_logs (
-    id              BIGSERIAL PRIMARY KEY,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     actor_sub       TEXT NOT NULL,
     actor_email     TEXT,
     category        TEXT NOT NULL,

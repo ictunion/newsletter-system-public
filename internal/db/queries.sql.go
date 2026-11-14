@@ -81,17 +81,17 @@ type ListAuditLogsParams struct {
 }
 
 type ListAuditLogsRow struct {
-	ID         int64     `json:"id"`
-	CreatedAt  time.Time `json:"created_at"`
-	ActorSub   string    `json:"actor_sub"`
-	ActorEmail *string   `json:"actor_email"`
-	Category   string    `json:"category"`
-	Action     string    `json:"action"`
-	Method     string    `json:"method"`
-	Route      string    `json:"route"`
-	Path       string    `json:"path"`
-	StatusCode int32     `json:"status_code"`
-	TotalCount int64     `json:"total_count"`
+	ID         pgtype.UUID `json:"id"`
+	CreatedAt  time.Time   `json:"created_at"`
+	ActorSub   string      `json:"actor_sub"`
+	ActorEmail *string     `json:"actor_email"`
+	Category   string      `json:"category"`
+	Action     string      `json:"action"`
+	Method     string      `json:"method"`
+	Route      string      `json:"route"`
+	Path       string      `json:"path"`
+	StatusCode int32       `json:"status_code"`
+	TotalCount int64       `json:"total_count"`
 }
 
 // Admin audit log (GET /audit-logs), newest first. Every filter arg is

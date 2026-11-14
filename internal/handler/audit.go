@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kubik/newsletter-system/internal/db"
 	"github.com/kubik/newsletter-system/internal/keycloak"
 )
@@ -152,16 +153,16 @@ type auditLogsResponse struct {
 }
 
 type auditLogItem struct {
-	ID         int64     `json:"id"`
-	CreatedAt  time.Time `json:"created_at"`
-	ActorSub   string    `json:"actor_sub"`
-	ActorEmail *string   `json:"actor_email"`
-	Category   string    `json:"category"`
-	Action     string    `json:"action"`
-	Method     string    `json:"method"`
-	Route      string    `json:"route"`
-	Path       string    `json:"path"`
-	StatusCode int32     `json:"status_code"`
+	ID         pgtype.UUID `json:"id" swaggertype:"string" format:"uuid"`
+	CreatedAt  time.Time   `json:"created_at"`
+	ActorSub   string      `json:"actor_sub"`
+	ActorEmail *string     `json:"actor_email"`
+	Category   string      `json:"category"`
+	Action     string      `json:"action"`
+	Method     string      `json:"method"`
+	Route      string      `json:"route"`
+	Path       string      `json:"path"`
+	StatusCode int32       `json:"status_code"`
 }
 
 // ListAuditLogs handles GET /audit-logs — the audit trail of every

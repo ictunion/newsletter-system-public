@@ -51,10 +51,12 @@ New code follows the same shape as bank-system: `internal/syncjob` for scheduled
 
 ## Data model
 
+Every internal ID is `UUID DEFAULT gen_random_uuid()`, including `audit_logs`. Provider IDs (`listmonk_id`, `listmonk_subscriber_id`) and orca's `member_number` stay `INTEGER`, as their systems issue them.
+
 ### `newsletter_lists`
 Our own list entity. Provider columns are nullable, so a list can exist without Listmonk.
 
-- `id BIGSERIAL PRIMARY KEY`
+- `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
 - `name TEXT NOT NULL`
 - `visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'members', 'public'))`
   - `private`: admins only. This is the default, including for lists the Listmonk sync creates.
@@ -68,13 +70,12 @@ Our own list entity. Provider columns are nullable, so a list can exist without 
 ### `subscribers`
 Anyone who receives a newsletter. A member is a subscriber with a `member_number`. Non-members, for example event invitees added in the Listmonk UI, have none.
 
-- `id BIGSERIAL PRIMARY KEY`
+- `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
 - `email TEXT NOT NULL`, with a unique index on `lower(email)`
 - `name TEXT NOT NULL`: what goes to the provider. For members it is `first_name || ' ' || last_name`, computed on write.
 - Member-only fields, NULL for non-members:
   - `member_number INTEGER UNIQUE NULL`
   - `first_name TEXT NULL`, `last_name TEXT NULL`, `city TEXT NULL`, `lang TEXT NULL`
-  - `workplace_newsletter_id INTEGER NULL`: orca's `workplaces.newsletter_id`, stored as received
 - `listmonk_subscriber_id INTEGER UNIQUE NULL`
 - `created_at`, `updated_at`
 - CHECK: `member_number IS NOT NULL` or every other member-only field is NULL. A member also needs `first_name`, `last_name` and `lang`.
@@ -82,15 +83,15 @@ Anyone who receives a newsletter. A member is a subscriber with a `member_number
 ### `subscriptions`
 One row per subscriber and list. Rows are **never deleted, only re-statused**, except when the subscriber is deleted. That is how the provider sync knows what to remove.
 
-- `subscriber_id BIGINT REFERENCES subscribers ON DELETE CASCADE`
-- `list_id BIGINT REFERENCES newsletter_lists ON DELETE RESTRICT`
+- `subscriber_id UUID REFERENCES subscribers ON DELETE CASCADE`
+- `list_id UUID REFERENCES newsletter_lists ON DELETE RESTRICT`
 - `status TEXT NOT NULL CHECK (status IN ('subscribed', 'unsubscribed', 'removed'))`
   - `unsubscribed`: the subscriber opted out themselves, either in the provider or later in the self-management frontend.
   - `removed`: an admin removed them, or their rule or workplace no longer applies.
 - `source TEXT NOT NULL CHECK (source IN ('rule', 'workplace', 'manual', 'self'))`: how the row was first created.
   - `manual` comes from an admin, through orca's UI or the Listmonk UI.
   - `self` is reserved for the self-management frontend.
-- `rule_id BIGINT NULL REFERENCES subscription_rules ON DELETE SET NULL`: set only for `source = 'rule'`
+- `rule_id UUID NULL REFERENCES subscription_rules ON DELETE SET NULL`: set only for `source = 'rule'`
 - `listmonk_status TEXT NULL`: last seen Listmonk per-list status (`unconfirmed` / `confirmed` / `unsubscribed`)
 - `created_at`, `updated_at`
 - `PRIMARY KEY (subscriber_id, list_id)`
@@ -103,11 +104,11 @@ What may change a row automatically:
 ### `subscription_rules`
 For cities and other member attributes. Workplaces are not rules. This follows bank-system's `categorization_rules`, with one difference: **every** matching enabled rule applies (union), not only the first match.
 
-- `id BIGSERIAL PRIMARY KEY`
+- `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
 - `kind TEXT NOT NULL CHECK (kind IN ('all', 'city'))`. New attribute kinds are added here as they come up.
   - `all`: every member goes to `list_id`.
   - `city`: members whose city contains `city_contains` go to `list_id`. The match is case-insensitive and accent-insensitive: "Praha", "praha 4" and "PRAHA" all match `praha`. Normalize in Go with `golang.org/x/text` (NFD, then strip marks). It is already in the module graph.
-- `list_id BIGINT NOT NULL REFERENCES newsletter_lists ON DELETE RESTRICT`
+- `list_id UUID NOT NULL REFERENCES newsletter_lists ON DELETE RESTRICT`
 - `city_contains TEXT NULL`
 - `enabled BOOLEAN NOT NULL DEFAULT true`, `note TEXT NULL`, `created_at`
 - CHECK: `all` takes no `city_contains`. `city` requires it.
@@ -117,6 +118,7 @@ No seed rows. List IDs come from the first Listmonk sync, and admins create the 
 
 ### Workplace lists (not rules)
 - The member's `workplace_newsletter_id` goes to the list whose `listmonk_id` matches, with `source = 'workplace'`.
+- The ID is input only, from the `POST`/`PUT /members` payload or the orca snapshot. It is not stored on `subscribers`. The `workplace` subscription row is the record of it.
 - No match among active lists: log a warning and skip. We fix the stored ID in orca based on the logs.
 - The ID is a Listmonk list ID, because that is what orca stores. Switching providers would need these IDs remapped.
 - Workplace is the only group type for now. Other group types later follow the same pattern: a new payload field, a new `source` value, and direct ID matching.
@@ -135,9 +137,9 @@ One function, `applyMember(tx, member)`, runs it and changes the subscription ro
 ### `provider_jobs`
 The retry queue for pushing state to the provider. A job stores **no PII** and no list IDs. The worker reads current state from the DB when it runs, so a job means "make the provider match our DB for this subscriber".
 
-- `id BIGSERIAL PRIMARY KEY`
+- `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
 - `kind TEXT NOT NULL CHECK (kind IN ('push_subscriber', 'delete_subscriber'))`
-- `subscriber_id BIGINT NULL REFERENCES subscribers ON DELETE CASCADE`: set for `push_subscriber`
+- `subscriber_id UUID NULL REFERENCES subscribers ON DELETE CASCADE`: set for `push_subscriber`
 - `listmonk_subscriber_id INTEGER NULL`: set for `delete_subscriber`, because the subscriber row is already gone
 - `status TEXT NOT NULL CHECK (status IN ('pending', 'dead'))`, `attempt_count`, `next_attempt_at`, `last_error`, `created_at`, `updated_at`
 - `UNIQUE (subscriber_id) WHERE kind = 'push_subscriber' AND status = 'pending'`: enqueueing twice is a no-op (`ON CONFLICT DO NOTHING`)
@@ -155,9 +157,9 @@ One row per scheduled run, as in bank-system's `sync_fio_runs` / `sync_orca_runs
 ### `pending_changes`
 Drift found by the orca reconciliation or the list sync, waiting for an admin decision. orca's direct calls never go through here.
 
-- `id BIGSERIAL PRIMARY KEY`
+- `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
 - `kind TEXT NOT NULL CHECK (kind IN ('member_new', 'member_updated', 'member_removed', 'subscription_add', 'subscription_remove', 'list_removed'))`
-- `member_number INTEGER NULL`, `list_id BIGINT NULL`
+- `member_number INTEGER NULL`, `list_id UUID NULL`
 - `payload JSONB NOT NULL`: the orca snapshot or field diff that gets applied on approval
 - `status CHECK (status IN ('pending', 'approved', 'rejected'))`, `detected_at`, `decided_at`, `decided_by` (Keycloak `sub`)
 - `UNIQUE (kind, member_number, list_id) WHERE status = 'pending'`: re-detecting the same change updates `payload` instead of adding a row.
@@ -257,8 +259,8 @@ For each linked list, `GET /api/subscribers?list_id=X&per_page=all`. Skip any su
 ### 8. orca reconciliation (daily)
 Pull every active member from orca's sync endpoint: `ORCA_API_URL` + `ORCA_SYNC_TOKEN`, the bank-system pattern. It returns the `POST /members` fields. Diff against our members and raise pending changes:
 - `member_new`: member is in orca but not here, for example a lost `POST`. Approving it runs flow 1.
-- `member_updated`: fields differ, for example a lost `PUT`. Approving it runs flow 2.
-- `subscription_add` / `subscription_remove`: the data matches but `desiredLists` differs from our `rule`/`workplace` rows, typically after an admin edits a rule. Approving it changes that one row as `applyMember` would. Rows in `unsubscribed`, `removed`, `manual` or `self` are never proposed.
+- `member_updated`: stored fields differ (email, name, city, lang), for example a lost `PUT`. Approving it runs flow 2. A lost workplace change shows up as `subscription_add` / `subscription_remove` instead, since the workplace is not stored.
+- `subscription_add` / `subscription_remove`: the data matches but `desiredLists` differs from our `rule`/`workplace` rows, typically after an admin edits a rule or a lost workplace change. Approving it changes that one row as `applyMember` would. Rows in `unsubscribed`, `removed`, `manual` or `self` are never proposed.
 - `member_removed`: member is here but not in orca, for example a lost `DELETE`. Approving it runs flow 3.
 
 The frontend supports bulk approve, which initial population needs.

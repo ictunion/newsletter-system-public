@@ -26,9 +26,9 @@ For every task that adds routes:
 **Done when:** `config_test.go` covers the new required and optional combinations and the HTTPS check.
 
 ## 3. Schema
-- [ ] Add migrations `00002_lists` through `00006_sync`, exactly as described in *Data model*: tables, CHECKs, partial unique indexes and FKs.
-- [ ] Add a `+goose Down` for each.
-- [ ] No queries yet. They come with the tasks that use them.
+- [x] Add migrations `00002_lists` through `00006_sync`, exactly as described in *Data model*: tables, CHECKs, partial unique indexes and FKs.
+- [x] Add a `+goose Down` for each.
+- [x] No queries yet. They come with the tasks that use them.
 
 **Done when:** `make migrate` applies, the Down migrations roll back cleanly, and `make psql` shows the schema.
 

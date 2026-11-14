@@ -13,7 +13,8 @@ definitions:
       created_at:
         type: string
       id:
-        type: integer
+        format: uuid
+        type: string
       method:
         type: string
       path:

@@ -6,17 +6,102 @@ package db
 
 import (
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AuditLog struct {
-	ID         int64     `json:"id"`
-	CreatedAt  time.Time `json:"created_at"`
-	ActorSub   string    `json:"actor_sub"`
-	ActorEmail *string   `json:"actor_email"`
-	Category   string    `json:"category"`
-	Action     string    `json:"action"`
-	Method     string    `json:"method"`
-	Route      string    `json:"route"`
-	Path       string    `json:"path"`
-	StatusCode int32     `json:"status_code"`
+	ID         pgtype.UUID `json:"id"`
+	CreatedAt  time.Time   `json:"created_at"`
+	ActorSub   string      `json:"actor_sub"`
+	ActorEmail *string     `json:"actor_email"`
+	Category   string      `json:"category"`
+	Action     string      `json:"action"`
+	Method     string      `json:"method"`
+	Route      string      `json:"route"`
+	Path       string      `json:"path"`
+	StatusCode int32       `json:"status_code"`
+}
+
+type NewsletterList struct {
+	ID                      pgtype.UUID        `json:"id"`
+	Name                    string             `json:"name"`
+	Visibility              string             `json:"visibility"`
+	ListmonkID              *int32             `json:"listmonk_id"`
+	ListmonkSubscriberCount *int32             `json:"listmonk_subscriber_count"`
+	SyncedAt                pgtype.Timestamptz `json:"synced_at"`
+	DeletedAt               pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt               time.Time          `json:"created_at"`
+	UpdatedAt               time.Time          `json:"updated_at"`
+}
+
+type PendingChange struct {
+	ID           pgtype.UUID        `json:"id"`
+	Kind         string             `json:"kind"`
+	MemberNumber *int32             `json:"member_number"`
+	ListID       pgtype.UUID        `json:"list_id"`
+	Payload      []byte             `json:"payload"`
+	Status       string             `json:"status"`
+	DetectedAt   time.Time          `json:"detected_at"`
+	DecidedAt    pgtype.Timestamptz `json:"decided_at"`
+	DecidedBy    *string            `json:"decided_by"`
+}
+
+type ProviderJob struct {
+	ID                   pgtype.UUID `json:"id"`
+	Kind                 string      `json:"kind"`
+	SubscriberID         pgtype.UUID `json:"subscriber_id"`
+	ListmonkSubscriberID *int32      `json:"listmonk_subscriber_id"`
+	Status               string      `json:"status"`
+	AttemptCount         int32       `json:"attempt_count"`
+	NextAttemptAt        time.Time   `json:"next_attempt_at"`
+	LastError            *string     `json:"last_error"`
+	CreatedAt            time.Time   `json:"created_at"`
+	UpdatedAt            time.Time   `json:"updated_at"`
+}
+
+type Subscriber struct {
+	ID                   pgtype.UUID `json:"id"`
+	Email                string      `json:"email"`
+	Name                 string      `json:"name"`
+	MemberNumber         *int32      `json:"member_number"`
+	FirstName            *string     `json:"first_name"`
+	LastName             *string     `json:"last_name"`
+	City                 *string     `json:"city"`
+	Lang                 *string     `json:"lang"`
+	ListmonkSubscriberID *int32      `json:"listmonk_subscriber_id"`
+	CreatedAt            time.Time   `json:"created_at"`
+	UpdatedAt            time.Time   `json:"updated_at"`
+}
+
+type Subscription struct {
+	SubscriberID   pgtype.UUID `json:"subscriber_id"`
+	ListID         pgtype.UUID `json:"list_id"`
+	Status         string      `json:"status"`
+	Source         string      `json:"source"`
+	ListmonkStatus *string     `json:"listmonk_status"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
+	RuleID         pgtype.UUID `json:"rule_id"`
+}
+
+type SubscriptionRule struct {
+	ID           pgtype.UUID `json:"id"`
+	Kind         string      `json:"kind"`
+	ListID       pgtype.UUID `json:"list_id"`
+	CityContains *string     `json:"city_contains"`
+	Enabled      bool        `json:"enabled"`
+	Note         *string     `json:"note"`
+	CreatedAt    time.Time   `json:"created_at"`
+}
+
+type SyncRun struct {
+	ID              pgtype.UUID        `json:"id"`
+	Kind            string             `json:"kind"`
+	Status          string             `json:"status"`
+	StartedAt       time.Time          `json:"started_at"`
+	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
+	ItemsFetched    int32              `json:"items_fetched"`
+	ChangesDetected int32              `json:"changes_detected"`
+	Error           *string            `json:"error"`
 }

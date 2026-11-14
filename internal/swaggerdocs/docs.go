@@ -126,7 +126,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "id": {
-                    "type": "integer"
+                    "type": "string",
+                    "format": "uuid"
                 },
                 "method": {
                     "type": "string"
