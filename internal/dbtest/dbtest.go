@@ -48,6 +48,13 @@ func sharedPool(t *testing.T) *pgxpool.Pool {
 // each new table here; tables whose rows are seeded by migration must stay out.
 var truncateTables = []string{
 	"audit_logs",
+	"newsletter_lists",
+	"subscribers",
+	"subscriptions",
+	"subscription_rules",
+	"provider_jobs",
+	"sync_runs",
+	"pending_changes",
 }
 
 // Pool returns the shared *pgxpool.Pool for code that requires the concrete

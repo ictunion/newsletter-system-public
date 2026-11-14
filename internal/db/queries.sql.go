@@ -12,6 +12,40 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimDueJob = `-- name: ClaimDueJob :one
+UPDATE provider_jobs
+SET next_attempt_at = now() + make_interval(secs => $1::int), updated_at = clock_timestamp()
+WHERE id = (
+    SELECT id FROM provider_jobs
+    WHERE status = 'pending' AND next_attempt_at <= now()
+    ORDER BY next_attempt_at
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING id, kind, subscriber_id, listmonk_subscriber_id, status, attempt_count, next_attempt_at, last_error, created_at, updated_at
+`
+
+// Takes the next due job and leases it: next_attempt_at moves past the
+// lease so no other run picks it up meanwhile. The returned updated_at
+// identifies this claim (see DeleteFinishedJob).
+func (q *Queries) ClaimDueJob(ctx context.Context, leaseSeconds int32) (ProviderJob, error) {
+	row := q.db.QueryRow(ctx, claimDueJob, leaseSeconds)
+	var i ProviderJob
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.SubscriberID,
+		&i.ListmonkSubscriberID,
+		&i.Status,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createAuditLog = `-- name: CreateAuditLog :exec
 INSERT INTO audit_logs (
     actor_sub, actor_email,
@@ -49,6 +83,575 @@ func (q *Queries) CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) 
 	return err
 }
 
+const createMember = `-- name: CreateMember :one
+INSERT INTO subscribers (email, name, member_number, city, lang)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, email, name, member_number, city, lang, listmonk_subscriber_id, created_at, updated_at
+`
+
+type CreateMemberParams struct {
+	Email        string  `json:"email"`
+	Name         string  `json:"name"`
+	MemberNumber *int32  `json:"member_number"`
+	City         *string `json:"city"`
+	Lang         *string `json:"lang"`
+}
+
+func (q *Queries) CreateMember(ctx context.Context, arg CreateMemberParams) (Subscriber, error) {
+	row := q.db.QueryRow(ctx, createMember,
+		arg.Email,
+		arg.Name,
+		arg.MemberNumber,
+		arg.City,
+		arg.Lang,
+	)
+	var i Subscriber
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.MemberNumber,
+		&i.City,
+		&i.Lang,
+		&i.ListmonkSubscriberID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createNonMember = `-- name: CreateNonMember :one
+INSERT INTO subscribers (email, name, listmonk_subscriber_id)
+VALUES ($1, $2, $3)
+RETURNING id, email, name, member_number, city, lang, listmonk_subscriber_id, created_at, updated_at
+`
+
+type CreateNonMemberParams struct {
+	Email                string `json:"email"`
+	Name                 string `json:"name"`
+	ListmonkSubscriberID *int32 `json:"listmonk_subscriber_id"`
+}
+
+// Listmonk subscription import: someone added in the Listmonk UI.
+func (q *Queries) CreateNonMember(ctx context.Context, arg CreateNonMemberParams) (Subscriber, error) {
+	row := q.db.QueryRow(ctx, createNonMember, arg.Email, arg.Name, arg.ListmonkSubscriberID)
+	var i Subscriber
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.MemberNumber,
+		&i.City,
+		&i.Lang,
+		&i.ListmonkSubscriberID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createRule = `-- name: CreateRule :one
+INSERT INTO subscription_rules (kind, list_id, city_contains, enabled, note)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, kind, list_id, city_contains, enabled, note, created_at
+`
+
+type CreateRuleParams struct {
+	Kind         string      `json:"kind"`
+	ListID       pgtype.UUID `json:"list_id"`
+	CityContains *string     `json:"city_contains"`
+	Enabled      bool        `json:"enabled"`
+	Note         *string     `json:"note"`
+}
+
+func (q *Queries) CreateRule(ctx context.Context, arg CreateRuleParams) (SubscriptionRule, error) {
+	row := q.db.QueryRow(ctx, createRule,
+		arg.Kind,
+		arg.ListID,
+		arg.CityContains,
+		arg.Enabled,
+		arg.Note,
+	)
+	var i SubscriptionRule
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.ListID,
+		&i.CityContains,
+		&i.Enabled,
+		&i.Note,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const dBNow = `-- name: DBNow :one
+SELECT now()::timestamptz
+`
+
+// The database clock, for comparing with updated_at columns it sets.
+func (q *Queries) DBNow(ctx context.Context) (time.Time, error) {
+	row := q.db.QueryRow(ctx, dBNow)
+	var column_1 time.Time
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const decidePendingChange = `-- name: DecidePendingChange :one
+UPDATE pending_changes
+SET status = $1, decided_at = now(), decided_by = $2
+WHERE id = $3
+RETURNING id, kind, member_number, list_id, payload, status, detected_at, decided_at, decided_by
+`
+
+type DecidePendingChangeParams struct {
+	Status    string      `json:"status"`
+	DecidedBy *string     `json:"decided_by"`
+	ID        pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) DecidePendingChange(ctx context.Context, arg DecidePendingChangeParams) (PendingChange, error) {
+	row := q.db.QueryRow(ctx, decidePendingChange, arg.Status, arg.DecidedBy, arg.ID)
+	var i PendingChange
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.MemberNumber,
+		&i.ListID,
+		&i.Payload,
+		&i.Status,
+		&i.DetectedAt,
+		&i.DecidedAt,
+		&i.DecidedBy,
+	)
+	return i, err
+}
+
+const deleteFinishedJob = `-- name: DeleteFinishedJob :execrows
+DELETE FROM provider_jobs WHERE id = $1 AND updated_at = $2
+`
+
+type DeleteFinishedJobParams struct {
+	ID        pgtype.UUID `json:"id"`
+	ClaimedAt time.Time   `json:"claimed_at"`
+}
+
+// Deletes a successful job unless it was enqueued again while it ran
+// (updated_at moved), in which case it stays pending and runs again.
+func (q *Queries) DeleteFinishedJob(ctx context.Context, arg DeleteFinishedJobParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteFinishedJob, arg.ID, arg.ClaimedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteResolvedListRemovedChanges = `-- name: DeleteResolvedListRemovedChanges :execrows
+DELETE FROM pending_changes AS change
+USING newsletter_lists AS list
+WHERE change.kind = 'list_removed'
+  AND change.status = 'pending'
+  AND change.list_id = list.id
+  AND list.listmonk_id = ANY ($1::int[])
+`
+
+// A pending list_removed whose list Listmonk returns again is obsolete.
+func (q *Queries) DeleteResolvedListRemovedChanges(ctx context.Context, seenListmonkIds []int32) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteResolvedListRemovedChanges, seenListmonkIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteRule = `-- name: DeleteRule :execrows
+DELETE FROM subscription_rules WHERE id = $1
+`
+
+func (q *Queries) DeleteRule(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteRule, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteSubscriber = `-- name: DeleteSubscriber :one
+DELETE FROM subscribers WHERE id = $1 RETURNING listmonk_subscriber_id
+`
+
+// Subscriptions and pending push jobs cascade. Returns the provider ID for
+// the delete_subscriber job.
+func (q *Queries) DeleteSubscriber(ctx context.Context, id pgtype.UUID) (*int32, error) {
+	row := q.db.QueryRow(ctx, deleteSubscriber, id)
+	var listmonk_subscriber_id *int32
+	err := row.Scan(&listmonk_subscriber_id)
+	return listmonk_subscriber_id, err
+}
+
+const deleteSubscriberByMemberNumber = `-- name: DeleteSubscriberByMemberNumber :one
+DELETE FROM subscribers WHERE member_number = $1 RETURNING listmonk_subscriber_id
+`
+
+func (q *Queries) DeleteSubscriberByMemberNumber(ctx context.Context, memberNumber *int32) (*int32, error) {
+	row := q.db.QueryRow(ctx, deleteSubscriberByMemberNumber, memberNumber)
+	var listmonk_subscriber_id *int32
+	err := row.Scan(&listmonk_subscriber_id)
+	return listmonk_subscriber_id, err
+}
+
+const deleteUndetectedMemberChanges = `-- name: DeleteUndetectedMemberChanges :execrows
+DELETE FROM pending_changes
+WHERE status = 'pending'
+  AND kind IN ('member_new', 'member_updated', 'member_removed', 'subscription_add', 'subscription_remove')
+  AND detected_at < now()
+`
+
+// orca reconciliation, in its transaction: pending member and subscription
+// changes this run did not detect again (detected_at older than the
+// transaction) are resolved; drop them so nobody approves a stale change.
+func (q *Queries) DeleteUndetectedMemberChanges(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUndetectedMemberChanges)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const enqueueDeleteSubscriber = `-- name: EnqueueDeleteSubscriber :exec
+INSERT INTO provider_jobs (kind, listmonk_subscriber_id)
+VALUES ('delete_subscriber', $1)
+`
+
+func (q *Queries) EnqueueDeleteSubscriber(ctx context.Context, listmonkSubscriberID *int32) error {
+	_, err := q.db.Exec(ctx, enqueueDeleteSubscriber, listmonkSubscriberID)
+	return err
+}
+
+const enqueuePushSubscriber = `-- name: EnqueuePushSubscriber :exec
+WITH replaced_dead AS (
+    DELETE FROM provider_jobs
+    WHERE kind = 'push_subscriber' AND status = 'dead' AND subscriber_id = $1
+)
+INSERT INTO provider_jobs (kind, subscriber_id)
+VALUES ('push_subscriber', $1)
+ON CONFLICT (subscriber_id) WHERE kind = 'push_subscriber' AND status = 'pending'
+DO UPDATE SET next_attempt_at = now(), updated_at = clock_timestamp()
+`
+
+// One push job per subscriber: the worker reads current state when it runs.
+// A pending job is touched instead (due now, new updated_at), so a worker
+// already processing it sees the change and keeps it for another run. A
+// dead push is replaced by the new one.
+func (q *Queries) EnqueuePushSubscriber(ctx context.Context, subscriberID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, enqueuePushSubscriber, subscriberID)
+	return err
+}
+
+const failJob = `-- name: FailJob :exec
+UPDATE provider_jobs
+SET attempt_count = attempt_count + 1,
+    last_error = $1,
+    status = CASE WHEN attempt_count + 1 >= $2::int THEN 'dead' ELSE 'pending' END,
+    next_attempt_at = now() + make_interval(secs => $3::int),
+    updated_at = clock_timestamp()
+WHERE id = $4
+`
+
+type FailJobParams struct {
+	LastError      *string     `json:"last_error"`
+	MaxAttempts    int32       `json:"max_attempts"`
+	RetryInSeconds int32       `json:"retry_in_seconds"`
+	ID             pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) FailJob(ctx context.Context, arg FailJobParams) error {
+	_, err := q.db.Exec(ctx, failJob,
+		arg.LastError,
+		arg.MaxAttempts,
+		arg.RetryInSeconds,
+		arg.ID,
+	)
+	return err
+}
+
+const failStaleSyncRuns = `-- name: FailStaleSyncRuns :execrows
+UPDATE sync_runs
+SET status = 'failed', finished_at = now(), error = 'interrupted: server restarted'
+WHERE status = 'running'
+`
+
+// Run once at startup: a run still 'running' was cut off by a crash or restart.
+func (q *Queries) FailStaleSyncRuns(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, failStaleSyncRuns)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishSyncRun = `-- name: FinishSyncRun :exec
+UPDATE sync_runs
+SET status = $1,
+    finished_at = now(),
+    items_fetched = $2,
+    changes_detected = $3,
+    error = $4
+WHERE id = $5
+`
+
+type FinishSyncRunParams struct {
+	Status          string      `json:"status"`
+	ItemsFetched    int32       `json:"items_fetched"`
+	ChangesDetected int32       `json:"changes_detected"`
+	Error           *string     `json:"error"`
+	ID              pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) FinishSyncRun(ctx context.Context, arg FinishSyncRunParams) error {
+	_, err := q.db.Exec(ctx, finishSyncRun,
+		arg.Status,
+		arg.ItemsFetched,
+		arg.ChangesDetected,
+		arg.Error,
+		arg.ID,
+	)
+	return err
+}
+
+const getJob = `-- name: GetJob :one
+SELECT id, kind, subscriber_id, listmonk_subscriber_id, status, attempt_count, next_attempt_at, last_error, created_at, updated_at FROM provider_jobs WHERE id = $1
+`
+
+func (q *Queries) GetJob(ctx context.Context, id pgtype.UUID) (ProviderJob, error) {
+	row := q.db.QueryRow(ctx, getJob, id)
+	var i ProviderJob
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.SubscriberID,
+		&i.ListmonkSubscriberID,
+		&i.Status,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getList = `-- name: GetList :one
+SELECT id, name, description, visibility, listmonk_id, listmonk_subscriber_count, synced_at, deleted_at, created_at, updated_at FROM newsletter_lists WHERE id = $1
+`
+
+func (q *Queries) GetList(ctx context.Context, id pgtype.UUID) (NewsletterList, error) {
+	row := q.db.QueryRow(ctx, getList, id)
+	var i NewsletterList
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.Visibility,
+		&i.ListmonkID,
+		&i.ListmonkSubscriberCount,
+		&i.SyncedAt,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSubscriber = `-- name: GetSubscriber :one
+SELECT id, email, name, member_number, city, lang, listmonk_subscriber_id, created_at, updated_at FROM subscribers WHERE id = $1
+`
+
+func (q *Queries) GetSubscriber(ctx context.Context, id pgtype.UUID) (Subscriber, error) {
+	row := q.db.QueryRow(ctx, getSubscriber, id)
+	var i Subscriber
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.MemberNumber,
+		&i.City,
+		&i.Lang,
+		&i.ListmonkSubscriberID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSubscriberByEmail = `-- name: GetSubscriberByEmail :one
+SELECT id, email, name, member_number, city, lang, listmonk_subscriber_id, created_at, updated_at FROM subscribers WHERE lower(email) = lower($1)
+`
+
+func (q *Queries) GetSubscriberByEmail(ctx context.Context, email string) (Subscriber, error) {
+	row := q.db.QueryRow(ctx, getSubscriberByEmail, email)
+	var i Subscriber
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.MemberNumber,
+		&i.City,
+		&i.Lang,
+		&i.ListmonkSubscriberID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSubscriberByListmonkID = `-- name: GetSubscriberByListmonkID :one
+SELECT id, email, name, member_number, city, lang, listmonk_subscriber_id, created_at, updated_at FROM subscribers WHERE listmonk_subscriber_id = $1
+`
+
+func (q *Queries) GetSubscriberByListmonkID(ctx context.Context, listmonkSubscriberID *int32) (Subscriber, error) {
+	row := q.db.QueryRow(ctx, getSubscriberByListmonkID, listmonkSubscriberID)
+	var i Subscriber
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.MemberNumber,
+		&i.City,
+		&i.Lang,
+		&i.ListmonkSubscriberID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSubscriberByMemberNumber = `-- name: GetSubscriberByMemberNumber :one
+SELECT id, email, name, member_number, city, lang, listmonk_subscriber_id, created_at, updated_at FROM subscribers WHERE member_number = $1
+`
+
+func (q *Queries) GetSubscriberByMemberNumber(ctx context.Context, memberNumber *int32) (Subscriber, error) {
+	row := q.db.QueryRow(ctx, getSubscriberByMemberNumber, memberNumber)
+	var i Subscriber
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.MemberNumber,
+		&i.City,
+		&i.Lang,
+		&i.ListmonkSubscriberID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSubscription = `-- name: GetSubscription :one
+SELECT subscriber_id, list_id, status, source, listmonk_status, created_at, updated_at, rule_id FROM subscriptions WHERE subscriber_id = $1 AND list_id = $2
+`
+
+type GetSubscriptionParams struct {
+	SubscriberID pgtype.UUID `json:"subscriber_id"`
+	ListID       pgtype.UUID `json:"list_id"`
+}
+
+func (q *Queries) GetSubscription(ctx context.Context, arg GetSubscriptionParams) (Subscription, error) {
+	row := q.db.QueryRow(ctx, getSubscription, arg.SubscriberID, arg.ListID)
+	var i Subscription
+	err := row.Scan(
+		&i.SubscriberID,
+		&i.ListID,
+		&i.Status,
+		&i.Source,
+		&i.ListmonkStatus,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RuleID,
+	)
+	return i, err
+}
+
+const insertSubscription = `-- name: InsertSubscription :execrows
+INSERT INTO subscriptions (subscriber_id, list_id, status, source, rule_id)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (subscriber_id, list_id) DO NOTHING
+`
+
+type InsertSubscriptionParams struct {
+	SubscriberID pgtype.UUID `json:"subscriber_id"`
+	ListID       pgtype.UUID `json:"list_id"`
+	Status       string      `json:"status"`
+	Source       string      `json:"source"`
+	RuleID       pgtype.UUID `json:"rule_id"`
+}
+
+// Creates a row only; an existing row for the list is left alone.
+func (q *Queries) InsertSubscription(ctx context.Context, arg InsertSubscriptionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertSubscription,
+		arg.SubscriberID,
+		arg.ListID,
+		arg.Status,
+		arg.Source,
+		arg.RuleID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const linkListmonkSubscriber = `-- name: LinkListmonkSubscriber :exec
+UPDATE subscribers
+SET listmonk_subscriber_id = $1, updated_at = now()
+WHERE id = $2
+`
+
+type LinkListmonkSubscriberParams struct {
+	ListmonkSubscriberID *int32      `json:"listmonk_subscriber_id"`
+	ID                   pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) LinkListmonkSubscriber(ctx context.Context, arg LinkListmonkSubscriberParams) error {
+	_, err := q.db.Exec(ctx, linkListmonkSubscriber, arg.ListmonkSubscriberID, arg.ID)
+	return err
+}
+
+const listAllLists = `-- name: ListAllLists :many
+SELECT id, name, description, visibility, listmonk_id, listmonk_subscriber_count, synced_at, deleted_at, created_at, updated_at FROM newsletter_lists ORDER BY name, id
+`
+
+func (q *Queries) ListAllLists(ctx context.Context) ([]NewsletterList, error) {
+	rows, err := q.db.Query(ctx, listAllLists)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NewsletterList
+	for rows.Next() {
+		var i NewsletterList
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.Visibility,
+			&i.ListmonkID,
+			&i.ListmonkSubscriberCount,
+			&i.SyncedAt,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAuditLogs = `-- name: ListAuditLogs :many
 SELECT
     id,
@@ -81,17 +684,17 @@ type ListAuditLogsParams struct {
 }
 
 type ListAuditLogsRow struct {
-	ID         int64     `json:"id"`
-	CreatedAt  time.Time `json:"created_at"`
-	ActorSub   string    `json:"actor_sub"`
-	ActorEmail *string   `json:"actor_email"`
-	Category   string    `json:"category"`
-	Action     string    `json:"action"`
-	Method     string    `json:"method"`
-	Route      string    `json:"route"`
-	Path       string    `json:"path"`
-	StatusCode int32     `json:"status_code"`
-	TotalCount int64     `json:"total_count"`
+	ID         pgtype.UUID `json:"id"`
+	CreatedAt  time.Time   `json:"created_at"`
+	ActorSub   string      `json:"actor_sub"`
+	ActorEmail *string     `json:"actor_email"`
+	Category   string      `json:"category"`
+	Action     string      `json:"action"`
+	Method     string      `json:"method"`
+	Route      string      `json:"route"`
+	Path       string      `json:"path"`
+	StatusCode int32       `json:"status_code"`
+	TotalCount int64       `json:"total_count"`
 }
 
 // Admin audit log (GET /audit-logs), newest first. Every filter arg is
@@ -135,4 +738,972 @@ func (q *Queries) ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const listIsActive = `-- name: ListIsActive :one
+SELECT EXISTS (SELECT 1 FROM newsletter_lists WHERE id = $1 AND deleted_at IS NULL)
+`
+
+func (q *Queries) ListIsActive(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, listIsActive, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const listJobs = `-- name: ListJobs :many
+SELECT
+    job.id, job.kind, job.subscriber_id, job.listmonk_subscriber_id, job.status, job.attempt_count, job.next_attempt_at, job.last_error, job.created_at, job.updated_at,
+    subscriber.email AS subscriber_email,
+    subscriber.member_number AS subscriber_member_number,
+    count(*) OVER () AS total_count
+FROM provider_jobs AS job
+LEFT JOIN subscribers AS subscriber ON subscriber.id = job.subscriber_id
+WHERE $1::text IS NULL OR job.status = $1::text
+ORDER BY job.created_at DESC, job.id
+LIMIT $3::int OFFSET $2::int
+`
+
+type ListJobsParams struct {
+	Status *string `json:"status"`
+	Off    int32   `json:"off"`
+	Lim    int32   `json:"lim"`
+}
+
+type ListJobsRow struct {
+	ID                     pgtype.UUID `json:"id"`
+	Kind                   string      `json:"kind"`
+	SubscriberID           pgtype.UUID `json:"subscriber_id"`
+	ListmonkSubscriberID   *int32      `json:"listmonk_subscriber_id"`
+	Status                 string      `json:"status"`
+	AttemptCount           int32       `json:"attempt_count"`
+	NextAttemptAt          time.Time   `json:"next_attempt_at"`
+	LastError              *string     `json:"last_error"`
+	CreatedAt              time.Time   `json:"created_at"`
+	UpdatedAt              time.Time   `json:"updated_at"`
+	SubscriberEmail        *string     `json:"subscriber_email"`
+	SubscriberMemberNumber *int32      `json:"subscriber_member_number"`
+	TotalCount             int64       `json:"total_count"`
+}
+
+// GET /jobs: newest first, with the subscriber for display. status NULL
+// means every status.
+func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]ListJobsRow, error) {
+	rows, err := q.db.Query(ctx, listJobs, arg.Status, arg.Off, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListJobsRow
+	for rows.Next() {
+		var i ListJobsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.SubscriberID,
+			&i.ListmonkSubscriberID,
+			&i.Status,
+			&i.AttemptCount,
+			&i.NextAttemptAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SubscriberEmail,
+			&i.SubscriberMemberNumber,
+			&i.TotalCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLinkedSubscribedOnList = `-- name: ListLinkedSubscribedOnList :many
+SELECT subscriber.id, subscriber.listmonk_subscriber_id::int AS listmonk_subscriber_id
+FROM subscriptions AS subscription
+JOIN subscribers AS subscriber ON subscriber.id = subscription.subscriber_id
+WHERE subscription.list_id = $1
+  AND subscription.status = 'subscribed'
+  AND subscriber.listmonk_subscriber_id IS NOT NULL
+  AND subscription.updated_at < $2::timestamptz
+`
+
+type ListLinkedSubscribedOnListParams struct {
+	ListID        pgtype.UUID `json:"list_id"`
+	ChangedBefore time.Time   `json:"changed_before"`
+}
+
+type ListLinkedSubscribedOnListRow struct {
+	ID                   pgtype.UUID `json:"id"`
+	ListmonkSubscriberID int32       `json:"listmonk_subscriber_id"`
+}
+
+// Subscribed rows on a list whose subscriber is linked to Listmonk, last
+// changed before changed_before (a row changed later is newer than the
+// Listmonk data it would be compared with).
+func (q *Queries) ListLinkedSubscribedOnList(ctx context.Context, arg ListLinkedSubscribedOnListParams) ([]ListLinkedSubscribedOnListRow, error) {
+	rows, err := q.db.Query(ctx, listLinkedSubscribedOnList, arg.ListID, arg.ChangedBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLinkedSubscribedOnListRow
+	for rows.Next() {
+		var i ListLinkedSubscribedOnListRow
+		if err := rows.Scan(&i.ID, &i.ListmonkSubscriberID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listListSubscribers = `-- name: ListListSubscribers :many
+SELECT
+    subscriber.id AS subscriber_id,
+    subscriber.email,
+    subscriber.name,
+    subscriber.member_number,
+    subscription.status,
+    subscription.source,
+    subscription.rule_id,
+    subscription.listmonk_status,
+    subscription.created_at,
+    subscription.updated_at,
+    count(*) OVER () AS total_count
+FROM subscriptions AS subscription
+JOIN subscribers AS subscriber ON subscriber.id = subscription.subscriber_id
+WHERE subscription.list_id = $1
+  AND ($2::text IS NULL OR subscription.status = $2::text)
+ORDER BY lower(subscriber.name), subscriber.id
+LIMIT $4::int OFFSET $3::int
+`
+
+type ListListSubscribersParams struct {
+	ListID pgtype.UUID `json:"list_id"`
+	Status *string     `json:"status"`
+	Off    int32       `json:"off"`
+	Lim    int32       `json:"lim"`
+}
+
+type ListListSubscribersRow struct {
+	SubscriberID   pgtype.UUID `json:"subscriber_id"`
+	Email          string      `json:"email"`
+	Name           string      `json:"name"`
+	MemberNumber   *int32      `json:"member_number"`
+	Status         string      `json:"status"`
+	Source         string      `json:"source"`
+	RuleID         pgtype.UUID `json:"rule_id"`
+	ListmonkStatus *string     `json:"listmonk_status"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
+	TotalCount     int64       `json:"total_count"`
+}
+
+// GET /lists/{id}/subscribers: the list's subscriptions with their
+// subscriber, by name. status NULL means every status. limit/offset paging
+// with count(*) OVER () as the total.
+func (q *Queries) ListListSubscribers(ctx context.Context, arg ListListSubscribersParams) ([]ListListSubscribersRow, error) {
+	rows, err := q.db.Query(ctx, listListSubscribers,
+		arg.ListID,
+		arg.Status,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListListSubscribersRow
+	for rows.Next() {
+		var i ListListSubscribersRow
+		if err := rows.Scan(
+			&i.SubscriberID,
+			&i.Email,
+			&i.Name,
+			&i.MemberNumber,
+			&i.Status,
+			&i.Source,
+			&i.RuleID,
+			&i.ListmonkStatus,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.TotalCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listListmonkIDsWithDeleteJobs = `-- name: ListListmonkIDsWithDeleteJobs :many
+SELECT listmonk_subscriber_id::int FROM provider_jobs WHERE kind = 'delete_subscriber'
+`
+
+// Listmonk subscribers we deleted but Listmonk still has until the job runs.
+func (q *Queries) ListListmonkIDsWithDeleteJobs(ctx context.Context) ([]int32, error) {
+	rows, err := q.db.Query(ctx, listListmonkIDsWithDeleteJobs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int32
+	for rows.Next() {
+		var listmonk_subscriber_id int32
+		if err := rows.Scan(&listmonk_subscriber_id); err != nil {
+			return nil, err
+		}
+		items = append(items, listmonk_subscriber_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMemberSubscriptions = `-- name: ListMemberSubscriptions :many
+SELECT subscription.subscriber_id, subscription.list_id, subscription.status, subscription.source, subscription.listmonk_status, subscription.created_at, subscription.updated_at, subscription.rule_id
+FROM subscriptions AS subscription
+JOIN subscribers AS subscriber ON subscriber.id = subscription.subscriber_id
+WHERE subscriber.member_number IS NOT NULL
+`
+
+// Every member's subscriptions, for the orca reconciliation.
+func (q *Queries) ListMemberSubscriptions(ctx context.Context) ([]Subscription, error) {
+	rows, err := q.db.Query(ctx, listMemberSubscriptions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Subscription
+	for rows.Next() {
+		var i Subscription
+		if err := rows.Scan(
+			&i.SubscriberID,
+			&i.ListID,
+			&i.Status,
+			&i.Source,
+			&i.ListmonkStatus,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RuleID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMembers = `-- name: ListMembers :many
+SELECT id, email, name, member_number, city, lang, listmonk_subscriber_id, created_at, updated_at FROM subscribers WHERE member_number IS NOT NULL ORDER BY member_number
+`
+
+func (q *Queries) ListMembers(ctx context.Context) ([]Subscriber, error) {
+	rows, err := q.db.Query(ctx, listMembers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Subscriber
+	for rows.Next() {
+		var i Subscriber
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Name,
+			&i.MemberNumber,
+			&i.City,
+			&i.Lang,
+			&i.ListmonkSubscriberID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMissingListmonkLists = `-- name: ListMissingListmonkLists :many
+SELECT id, name, listmonk_id::int AS listmonk_id
+FROM newsletter_lists
+WHERE listmonk_id IS NOT NULL
+  AND deleted_at IS NULL
+  AND NOT (listmonk_id = ANY ($1::int[]))
+ORDER BY listmonk_id
+`
+
+type ListMissingListmonkListsRow struct {
+	ID         pgtype.UUID `json:"id"`
+	Name       string      `json:"name"`
+	ListmonkID int32       `json:"listmonk_id"`
+}
+
+// Active Listmonk-linked lists that Listmonk no longer returned.
+func (q *Queries) ListMissingListmonkLists(ctx context.Context, seenListmonkIds []int32) ([]ListMissingListmonkListsRow, error) {
+	rows, err := q.db.Query(ctx, listMissingListmonkLists, seenListmonkIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMissingListmonkListsRow
+	for rows.Next() {
+		var i ListMissingListmonkListsRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.ListmonkID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNewsletterLists = `-- name: ListNewsletterLists :many
+SELECT
+    list.id,
+    list.name,
+    list.description,
+    list.visibility,
+    list.listmonk_id,
+    list.listmonk_subscriber_count,
+    list.synced_at,
+    list.deleted_at,
+    count(*) FILTER (WHERE subscription.status = 'subscribed') AS subscribed_count,
+    count(*) FILTER (WHERE subscription.status = 'unsubscribed') AS unsubscribed_count,
+    count(*) FILTER (WHERE subscription.status = 'removed') AS removed_count
+FROM newsletter_lists AS list
+LEFT JOIN subscriptions AS subscription ON subscription.list_id = list.id
+WHERE ($1::bool OR list.deleted_at IS NULL)
+  AND ($2::uuid IS NULL OR list.id = $2::uuid)
+GROUP BY list.id
+ORDER BY list.name, list.id
+`
+
+type ListNewsletterListsParams struct {
+	IncludeDeleted bool        `json:"include_deleted"`
+	ID             pgtype.UUID `json:"id"`
+}
+
+type ListNewsletterListsRow struct {
+	ID                      pgtype.UUID        `json:"id"`
+	Name                    string             `json:"name"`
+	Description             string             `json:"description"`
+	Visibility              string             `json:"visibility"`
+	ListmonkID              *int32             `json:"listmonk_id"`
+	ListmonkSubscriberCount *int32             `json:"listmonk_subscriber_count"`
+	SyncedAt                pgtype.Timestamptz `json:"synced_at"`
+	DeletedAt               pgtype.Timestamptz `json:"deleted_at"`
+	SubscribedCount         int64              `json:"subscribed_count"`
+	UnsubscribedCount       int64              `json:"unsubscribed_count"`
+	RemovedCount            int64              `json:"removed_count"`
+}
+
+// GET /lists: every list with our subscription counts per status. Deleted
+// lists only with include_deleted. id narrows it to one list (PUT /lists/{id}
+// returns the updated list in the same shape).
+func (q *Queries) ListNewsletterLists(ctx context.Context, arg ListNewsletterListsParams) ([]ListNewsletterListsRow, error) {
+	rows, err := q.db.Query(ctx, listNewsletterLists, arg.IncludeDeleted, arg.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNewsletterListsRow
+	for rows.Next() {
+		var i ListNewsletterListsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.Visibility,
+			&i.ListmonkID,
+			&i.ListmonkSubscriberCount,
+			&i.SyncedAt,
+			&i.DeletedAt,
+			&i.SubscribedCount,
+			&i.UnsubscribedCount,
+			&i.RemovedCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingChanges = `-- name: ListPendingChanges :many
+SELECT
+    change.id, change.kind, change.member_number, change.list_id, change.payload, change.status, change.detected_at, change.decided_at, change.decided_by,
+    list.name AS list_name,
+    count(*) OVER () AS total_count
+FROM pending_changes AS change
+LEFT JOIN newsletter_lists AS list ON list.id = change.list_id
+WHERE ($1::text IS NULL OR change.status = $1::text)
+  AND ($2::text IS NULL OR change.kind = $2::text)
+ORDER BY change.detected_at DESC, change.id
+LIMIT $4::int OFFSET $3::int
+`
+
+type ListPendingChangesParams struct {
+	Status *string `json:"status"`
+	Kind   *string `json:"kind"`
+	Off    int32   `json:"off"`
+	Lim    int32   `json:"lim"`
+}
+
+type ListPendingChangesRow struct {
+	ID           pgtype.UUID        `json:"id"`
+	Kind         string             `json:"kind"`
+	MemberNumber *int32             `json:"member_number"`
+	ListID       pgtype.UUID        `json:"list_id"`
+	Payload      []byte             `json:"payload"`
+	Status       string             `json:"status"`
+	DetectedAt   time.Time          `json:"detected_at"`
+	DecidedAt    pgtype.Timestamptz `json:"decided_at"`
+	DecidedBy    *string            `json:"decided_by"`
+	ListName     *string            `json:"list_name"`
+	TotalCount   int64              `json:"total_count"`
+}
+
+// GET /changes: newest first, with the list name for list changes. Every
+// filter is nullable.
+func (q *Queries) ListPendingChanges(ctx context.Context, arg ListPendingChangesParams) ([]ListPendingChangesRow, error) {
+	rows, err := q.db.Query(ctx, listPendingChanges,
+		arg.Status,
+		arg.Kind,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPendingChangesRow
+	for rows.Next() {
+		var i ListPendingChangesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.MemberNumber,
+			&i.ListID,
+			&i.Payload,
+			&i.Status,
+			&i.DetectedAt,
+			&i.DecidedAt,
+			&i.DecidedBy,
+			&i.ListName,
+			&i.TotalCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentSyncRuns = `-- name: ListRecentSyncRuns :many
+SELECT id, kind, status, started_at, finished_at, items_fetched, changes_detected, error
+FROM (
+    SELECT id, kind, status, started_at, finished_at, items_fetched, changes_detected, error, row_number() OVER (PARTITION BY kind ORDER BY started_at DESC) AS position
+    FROM sync_runs
+) AS ranked
+WHERE position <= $1::int
+ORDER BY kind, started_at DESC
+`
+
+// GET /sync-runs: the latest runs of each kind, newest first.
+func (q *Queries) ListRecentSyncRuns(ctx context.Context, perKind int32) ([]SyncRun, error) {
+	rows, err := q.db.Query(ctx, listRecentSyncRuns, perKind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SyncRun
+	for rows.Next() {
+		var i SyncRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Status,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.ItemsFetched,
+			&i.ChangesDetected,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRules = `-- name: ListRules :many
+SELECT id, kind, list_id, city_contains, enabled, note, created_at FROM subscription_rules ORDER BY created_at, id
+`
+
+func (q *Queries) ListRules(ctx context.Context) ([]SubscriptionRule, error) {
+	rows, err := q.db.Query(ctx, listRules)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SubscriptionRule
+	for rows.Next() {
+		var i SubscriptionRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.ListID,
+			&i.CityContains,
+			&i.Enabled,
+			&i.Note,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSubscriberIDsWithPushJobs = `-- name: ListSubscriberIDsWithPushJobs :many
+SELECT subscriber_id FROM provider_jobs WHERE kind = 'push_subscriber'
+`
+
+// Subscribers whose unsent (pending or dead) push wins over Listmonk's state.
+func (q *Queries) ListSubscriberIDsWithPushJobs(ctx context.Context) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listSubscriberIDsWithPushJobs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var subscriber_id pgtype.UUID
+		if err := rows.Scan(&subscriber_id); err != nil {
+			return nil, err
+		}
+		items = append(items, subscriber_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSubscriptions = `-- name: ListSubscriptions :many
+SELECT
+    subscription.list_id,
+    list.name AS list_name,
+    list.listmonk_id,
+    list.deleted_at AS list_deleted_at,
+    subscription.status,
+    subscription.source,
+    subscription.rule_id,
+    subscription.listmonk_status,
+    subscription.created_at,
+    subscription.updated_at
+FROM subscriptions AS subscription
+JOIN newsletter_lists AS list ON list.id = subscription.list_id
+WHERE subscription.subscriber_id = $1
+ORDER BY list.name, list.id
+`
+
+type ListSubscriptionsRow struct {
+	ListID         pgtype.UUID        `json:"list_id"`
+	ListName       string             `json:"list_name"`
+	ListmonkID     *int32             `json:"listmonk_id"`
+	ListDeletedAt  pgtype.Timestamptz `json:"list_deleted_at"`
+	Status         string             `json:"status"`
+	Source         string             `json:"source"`
+	RuleID         pgtype.UUID        `json:"rule_id"`
+	ListmonkStatus *string            `json:"listmonk_status"`
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+}
+
+// A subscriber's subscriptions with their list, for responses and applyMember.
+func (q *Queries) ListSubscriptions(ctx context.Context, subscriberID pgtype.UUID) ([]ListSubscriptionsRow, error) {
+	rows, err := q.db.Query(ctx, listSubscriptions, subscriberID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSubscriptionsRow
+	for rows.Next() {
+		var i ListSubscriptionsRow
+		if err := rows.Scan(
+			&i.ListID,
+			&i.ListName,
+			&i.ListmonkID,
+			&i.ListDeletedAt,
+			&i.Status,
+			&i.Source,
+			&i.RuleID,
+			&i.ListmonkStatus,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockPendingChange = `-- name: LockPendingChange :one
+SELECT id, kind, member_number, list_id, payload, status, detected_at, decided_at, decided_by FROM pending_changes WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockPendingChange(ctx context.Context, id pgtype.UUID) (PendingChange, error) {
+	row := q.db.QueryRow(ctx, lockPendingChange, id)
+	var i PendingChange
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.MemberNumber,
+		&i.ListID,
+		&i.Payload,
+		&i.Status,
+		&i.DetectedAt,
+		&i.DecidedAt,
+		&i.DecidedBy,
+	)
+	return i, err
+}
+
+const raisePendingChange = `-- name: RaisePendingChange :execrows
+INSERT INTO pending_changes (kind, member_number, list_id, payload)
+SELECT $1::text, $2::int, $3::uuid, $4::jsonb
+WHERE NOT EXISTS (
+    SELECT 1 FROM pending_changes AS rejected
+    WHERE rejected.status = 'rejected'
+      AND rejected.kind = $1::text
+      AND rejected.member_number IS NOT DISTINCT FROM $2::int
+      AND rejected.list_id IS NOT DISTINCT FROM $3::uuid
+      AND rejected.payload = $4::jsonb
+)
+ON CONFLICT (kind, member_number, list_id) WHERE status = 'pending'
+DO UPDATE SET payload = EXCLUDED.payload, detected_at = now()
+`
+
+type RaisePendingChangeParams struct {
+	Kind         string      `json:"kind"`
+	MemberNumber *int32      `json:"member_number"`
+	ListID       pgtype.UUID `json:"list_id"`
+	Payload      []byte      `json:"payload"`
+}
+
+// Raises a change, or refreshes the payload and detected_at of the same
+// pending change (kind, member_number, list_id). Not raised when an admin
+// already rejected the same change with an identical payload. Returns 1
+// when the change is now pending, 0 when it was suppressed.
+func (q *Queries) RaisePendingChange(ctx context.Context, arg RaisePendingChangeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, raisePendingChange,
+		arg.Kind,
+		arg.MemberNumber,
+		arg.ListID,
+		arg.Payload,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retryJob = `-- name: RetryJob :one
+UPDATE provider_jobs
+SET status = 'pending', attempt_count = 0, next_attempt_at = now(), updated_at = clock_timestamp()
+WHERE id = $1 AND status = 'dead'
+RETURNING id, kind, subscriber_id, listmonk_subscriber_id, status, attempt_count, next_attempt_at, last_error, created_at, updated_at
+`
+
+// Dead job back to pending, due now, with a fresh attempt count.
+func (q *Queries) RetryJob(ctx context.Context, id pgtype.UUID) (ProviderJob, error) {
+	row := q.db.QueryRow(ctx, retryJob, id)
+	var i ProviderJob
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.SubscriberID,
+		&i.ListmonkSubscriberID,
+		&i.Status,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const ruleExists = `-- name: RuleExists :one
+SELECT EXISTS (SELECT 1 FROM subscription_rules WHERE id = $1)
+`
+
+func (q *Queries) RuleExists(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, ruleExists, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const setListmonkStatus = `-- name: SetListmonkStatus :exec
+UPDATE subscriptions
+SET listmonk_status = $1
+WHERE subscriber_id = $2 AND list_id = $3
+`
+
+type SetListmonkStatusParams struct {
+	ListmonkStatus *string     `json:"listmonk_status"`
+	SubscriberID   pgtype.UUID `json:"subscriber_id"`
+	ListID         pgtype.UUID `json:"list_id"`
+}
+
+func (q *Queries) SetListmonkStatus(ctx context.Context, arg SetListmonkStatusParams) error {
+	_, err := q.db.Exec(ctx, setListmonkStatus, arg.ListmonkStatus, arg.SubscriberID, arg.ListID)
+	return err
+}
+
+const setListmonkSubscriberCount = `-- name: SetListmonkSubscriberCount :exec
+UPDATE newsletter_lists
+SET listmonk_subscriber_count = $1::int
+WHERE listmonk_id = $2::int
+`
+
+type SetListmonkSubscriberCountParams struct {
+	ListmonkSubscriberCount int32 `json:"listmonk_subscriber_count"`
+	ListmonkID              int32 `json:"listmonk_id"`
+}
+
+// After the worker pushes changes: refresh Listmonk's count only. Creating
+// lists and synced_at stay with the list sync.
+func (q *Queries) SetListmonkSubscriberCount(ctx context.Context, arg SetListmonkSubscriberCountParams) error {
+	_, err := q.db.Exec(ctx, setListmonkSubscriberCount, arg.ListmonkSubscriberCount, arg.ListmonkID)
+	return err
+}
+
+const setMemberFields = `-- name: SetMemberFields :one
+UPDATE subscribers
+SET email = $1,
+    name = $2,
+    member_number = $3,
+    city = $4,
+    lang = $5,
+    updated_at = now()
+WHERE id = $6
+RETURNING id, email, name, member_number, city, lang, listmonk_subscriber_id, created_at, updated_at
+`
+
+type SetMemberFieldsParams struct {
+	Email        string      `json:"email"`
+	Name         string      `json:"name"`
+	MemberNumber *int32      `json:"member_number"`
+	City         *string     `json:"city"`
+	Lang         *string     `json:"lang"`
+	ID           pgtype.UUID `json:"id"`
+}
+
+// Updates a member's data, or turns a non-member subscriber into a member.
+func (q *Queries) SetMemberFields(ctx context.Context, arg SetMemberFieldsParams) (Subscriber, error) {
+	row := q.db.QueryRow(ctx, setMemberFields,
+		arg.Email,
+		arg.Name,
+		arg.MemberNumber,
+		arg.City,
+		arg.Lang,
+		arg.ID,
+	)
+	var i Subscriber
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.MemberNumber,
+		&i.City,
+		&i.Lang,
+		&i.ListmonkSubscriberID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setSubscriptionStatus = `-- name: SetSubscriptionStatus :exec
+UPDATE subscriptions
+SET status = $1, updated_at = now()
+WHERE subscriber_id = $2 AND list_id = $3
+`
+
+type SetSubscriptionStatusParams struct {
+	Status       string      `json:"status"`
+	SubscriberID pgtype.UUID `json:"subscriber_id"`
+	ListID       pgtype.UUID `json:"list_id"`
+}
+
+func (q *Queries) SetSubscriptionStatus(ctx context.Context, arg SetSubscriptionStatusParams) error {
+	_, err := q.db.Exec(ctx, setSubscriptionStatus, arg.Status, arg.SubscriberID, arg.ListID)
+	return err
+}
+
+const softDeleteList = `-- name: SoftDeleteList :exec
+UPDATE newsletter_lists SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) SoftDeleteList(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, softDeleteList, id)
+	return err
+}
+
+const startSyncRun = `-- name: StartSyncRun :one
+INSERT INTO sync_runs (kind) VALUES ($1) RETURNING id
+`
+
+// Fails with a unique violation (sync_runs_running_idx) while another run
+// of the same kind is still running.
+func (q *Queries) StartSyncRun(ctx context.Context, kind string) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, startSyncRun, kind)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const syncRunIsRunning = `-- name: SyncRunIsRunning :one
+SELECT EXISTS (SELECT 1 FROM sync_runs WHERE kind = $1 AND status = 'running')
+`
+
+func (q *Queries) SyncRunIsRunning(ctx context.Context, kind string) (bool, error) {
+	row := q.db.QueryRow(ctx, syncRunIsRunning, kind)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const updateListVisibility = `-- name: UpdateListVisibility :execrows
+UPDATE newsletter_lists
+SET visibility = $1, updated_at = now()
+WHERE id = $2
+`
+
+type UpdateListVisibilityParams struct {
+	Visibility string      `json:"visibility"`
+	ID         pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateListVisibility(ctx context.Context, arg UpdateListVisibilityParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateListVisibility, arg.Visibility, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateRule = `-- name: UpdateRule :one
+UPDATE subscription_rules
+SET kind = $1,
+    list_id = $2,
+    city_contains = $3,
+    enabled = $4,
+    note = $5
+WHERE id = $6
+RETURNING id, kind, list_id, city_contains, enabled, note, created_at
+`
+
+type UpdateRuleParams struct {
+	Kind         string      `json:"kind"`
+	ListID       pgtype.UUID `json:"list_id"`
+	CityContains *string     `json:"city_contains"`
+	Enabled      bool        `json:"enabled"`
+	Note         *string     `json:"note"`
+	ID           pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateRule(ctx context.Context, arg UpdateRuleParams) (SubscriptionRule, error) {
+	row := q.db.QueryRow(ctx, updateRule,
+		arg.Kind,
+		arg.ListID,
+		arg.CityContains,
+		arg.Enabled,
+		arg.Note,
+		arg.ID,
+	)
+	var i SubscriptionRule
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.ListID,
+		&i.CityContains,
+		&i.Enabled,
+		&i.Note,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const upsertListmonkList = `-- name: UpsertListmonkList :exec
+INSERT INTO newsletter_lists (name, description, listmonk_id, listmonk_subscriber_count, synced_at)
+VALUES ($1, $2, $3::int, $4::int, now())
+ON CONFLICT (listmonk_id) DO UPDATE
+SET name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    listmonk_subscriber_count = EXCLUDED.listmonk_subscriber_count,
+    synced_at = now(),
+    deleted_at = NULL,
+    updated_at = now()
+`
+
+type UpsertListmonkListParams struct {
+	Name                    string `json:"name"`
+	Description             string `json:"description"`
+	ListmonkID              int32  `json:"listmonk_id"`
+	ListmonkSubscriberCount int32  `json:"listmonk_subscriber_count"`
+}
+
+// Listmonk list sync. New lists get the default 'private' visibility; an
+// existing list keeps its visibility and gets deleted_at cleared if it had
+// been soft-deleted and reappeared.
+func (q *Queries) UpsertListmonkList(ctx context.Context, arg UpsertListmonkListParams) error {
+	_, err := q.db.Exec(ctx, upsertListmonkList,
+		arg.Name,
+		arg.Description,
+		arg.ListmonkID,
+		arg.ListmonkSubscriberCount,
+	)
+	return err
 }

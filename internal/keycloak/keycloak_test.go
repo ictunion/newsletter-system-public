@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -310,15 +311,18 @@ func TestProvider_KeyRotation(t *testing.T) {
 
 // TestProvider_UnknownKidNeverResolves covers the other side: a kid that
 // isn't in the JWKS even after a refresh (forged, or a stale/unrelated
-// value) must still fail, not succeed against some fallback key.
+// value) must still fail, not succeed against some fallback key. Repeating
+// it must not refetch the JWKS each time.
 func TestProvider_UnknownKidNeverResolves(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("generating RSA key: %v", err)
 	}
 
+	var fetches atomic.Int32
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /realms/unknown-kid-test/protocol/openid-connect/certs", func(w http.ResponseWriter, r *http.Request) {
+		fetches.Add(1)
 		writeTestJWKS(w, "known-kid", &key.PublicKey)
 	})
 	server := httptest.NewServer(mux)
@@ -338,8 +342,13 @@ func TestProvider_UnknownKidNeverResolves(t *testing.T) {
 		t.Fatalf("signing token: %v", err)
 	}
 
-	if _, err := provider.Verify(signed); err == nil {
-		t.Error("Verify with an unresolvable kid: got nil error, want a failure")
+	for range 3 {
+		if _, err := provider.Verify(signed); err == nil {
+			t.Error("Verify with an unresolvable kid: got nil error, want a failure")
+		}
+	}
+	if got := fetches.Load(); got != 2 {
+		t.Errorf("JWKS fetches = %d, want 2 (startup, then one refresh)", got)
 	}
 }
 

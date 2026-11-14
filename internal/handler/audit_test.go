@@ -28,7 +28,7 @@ func auditTestClaims() *keycloak.Claims {
 // exactly like the real auth wrappers do.
 //
 // It also swaps in test-only audit routes/categories (restored on cleanup),
-// since the real auditRoutes starts empty until feature routes exist.
+// so these tests don't depend on the real route table.
 func auditTestMux(t *testing.T) *http.ServeMux {
 	t.Helper()
 	oldRoutes, oldCategories := auditRoutes, AuditCategories
@@ -41,7 +41,8 @@ func auditTestMux(t *testing.T) *http.ServeMux {
 
 	authenticated := func(status int) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			r = r.WithContext(withClaims(r.Context(), auditTestClaims(), "fake-token"))
+			// Only fills the audit record; the handler needs no claims itself.
+			_ = withClaims(r.Context(), auditTestClaims(), "fake-token")
 			w.WriteHeader(status)
 		}
 	}

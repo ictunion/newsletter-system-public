@@ -17,6 +17,11 @@ import (
 	"github.com/kubik/newsletter-system/internal/db"
 	"github.com/kubik/newsletter-system/internal/handler"
 	"github.com/kubik/newsletter-system/internal/keycloak"
+	"github.com/kubik/newsletter-system/internal/listmonk"
+	"github.com/kubik/newsletter-system/internal/members"
+	"github.com/kubik/newsletter-system/internal/orca"
+	"github.com/kubik/newsletter-system/internal/syncjob"
+	"github.com/kubik/newsletter-system/internal/worker"
 
 	// Registers the parsed swagger spec with swaggo's global template
 	// registry (see its own init()) — only imported for that side effect,
@@ -55,6 +60,54 @@ func main() {
 		log.Fatalf("db ping: %v", err)
 	}
 
+	if err := syncjob.FailStaleRuns(requestContext, db.New(pool)); err != nil {
+		log.Fatalf("sync: failing stale runs: %v", err)
+	}
+
+	// Listmonk is optional (see config.ListmonkHost): without it, no Listmonk
+	// syncs run or can be triggered and no provider worker runs. The first
+	// sync starts right away, in the background.
+	syncs := handler.Syncs{}
+	if appConfig.ListmonkHost != "" {
+		listmonkClient := listmonk.New(appConfig.ListmonkHost, appConfig.ListmonkAPIUser, appConfig.ListmonkAPIToken)
+		syncs[string(syncjob.KindListmonkLists)] = func(ctx context.Context) error {
+			return syncjob.RunListmonkListSync(ctx, pool, listmonkClient)
+		}
+		syncs[string(syncjob.KindListmonkSubscriptions)] = func(ctx context.Context) error {
+			return syncjob.RunListmonkSubscriptionImport(ctx, pool, listmonkClient)
+		}
+		// Every 12h: live changes come straight from orca (and later member
+		// self-service); this mainly picks up people's own opt-outs in
+		// Listmonk. The subscription import runs after the list sync, so it
+		// sees new lists.
+		go syncjob.Every(requestContext, 12*time.Hour, func(ctx context.Context) {
+			for _, kind := range []syncjob.Kind{syncjob.KindListmonkLists, syncjob.KindListmonkSubscriptions} {
+				if err := syncs[string(kind)](ctx); err != nil {
+					log.Printf("sync: %s: %v", kind, err)
+				}
+			}
+		})
+		go syncjob.Every(requestContext, worker.PollInterval, worker.Worker{Pool: pool, Listmonk: listmonkClient}.RunDue)
+	} else {
+		log.Print("LISTMONK_HOST not set: Listmonk syncs and the provider worker disabled")
+	}
+
+	// The orca reconciliation is optional too (see config.OrcaAPIURL). Daily:
+	// orca calls this API directly on every change; this catches lost calls.
+	if appConfig.OrcaAPIURL != "" {
+		orcaClient := orca.New(appConfig.OrcaAPIURL, appConfig.OrcaSyncToken)
+		syncs[string(syncjob.KindOrcaMembers)] = func(ctx context.Context) error {
+			return syncjob.RunOrcaReconciliation(ctx, pool, orcaClient)
+		}
+		go syncjob.Every(requestContext, 24*time.Hour, func(ctx context.Context) {
+			if err := syncs[string(syncjob.KindOrcaMembers)](ctx); err != nil {
+				log.Printf("sync: %s: %v", syncjob.KindOrcaMembers, err)
+			}
+		})
+	} else {
+		log.Print("ORCA_API_URL not set: orca reconciliation disabled")
+	}
+
 	keycloakProvider, err := keycloak.NewProvider(appConfig.KeycloakHost, appConfig.KeycloakRealm, appConfig.KeycloakClientID)
 	if err != nil {
 		log.Fatalf("keycloak: %v", err)
@@ -64,8 +117,7 @@ func main() {
 	// frontend at / and forward only /api/ here. Handler patterns below stay
 	// unprefixed; StripPrefix trims /api before matching.
 	api := http.NewServeMux()
-
-	api.HandleFunc("GET /audit-logs", handler.RequireRole(keycloakProvider, keycloak.RoleViewAuditLogs, handler.ListAuditLogs(db.New(pool))))
+	registerRoutes(api, requestContext, keycloakProvider, pool, syncs, members.Service{PushEnabled: appConfig.ListmonkHost != ""})
 
 	// Dev-only Swagger UI, off by default (see config.EnableSwaggerDocs).
 	// Mounted under /api like everything else, at /api/docs/index.html.

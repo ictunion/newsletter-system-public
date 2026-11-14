@@ -27,16 +27,18 @@ Frontend (API must be running):
 
 Tests: `make test` (creates and migrates a separate test database).
 
+Listmonk (optional, local testing only): `make listmonk` runs a throwaway Listmonk on http://localhost:9000 in the foreground, using the dev Postgres (database `listmonk`, config in [listmonk.toml](listmonk.toml)). It has no SMTP and sends no email. The first run creates the UI login `admin` / `listmonk` and the API user `newsletter-system` with token `newsletter-system-dev-token`, matching `.env.example`.
+
 Newsletter System needs a running Keycloak. It can be started by `make up` in the Main-system repo, or point your `.env` at your own Keycloak instance.
 
 ## Roles
 Every route needs a role from Keycloak (client `newsletter-system`). See [internal/keycloak/keycloak.go](internal/keycloak/keycloak.go) for the list of roles.
 
 ## Adding a route
-1. Add the SQL to `internal/db/queries.sql` (and a migration if needed), run `make sqlc`.
+1. Add the SQL to `internal/db/queries.sql` (and a migration if needed, created with `goose -dir migrations -s create <name> sql` for a sequential number), run `make sqlc`.
 2. Write the handler in `internal/handler`.
 3. Add a role in `internal/keycloak/keycloak.go` if needed.
-4. Register it in `cmd/server/main.go` behind `RequireRole`/`RequireAnyRole`/`RequireAuth`.
+4. Register it in `cmd/server/routes.go` behind `RequireRole`/`RequireAnyRole`/`RequireAuth`, and add it to the table in `cmd/server/routes_test.go`.
 5. Mutating routes: add an entry to `auditRoutes` in `internal/handler/audit.go`.
 6. Run `make swagger` to refresh the API docs.
 

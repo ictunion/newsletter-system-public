@@ -59,6 +59,22 @@ type Config struct {
 	// Optional, comma-separated, empty by default: no origin
 	// needs to be here unless another site calls in from a browser.
 	CorsAllowedOrigins []string
+
+	// ListmonkHost/APIUser/APIToken configure the Listmonk API client.
+	// Optional: an empty ListmonkHost runs without Listmonk (no worker, no
+	// Listmonk syncs, no jobs enqueued). When ListmonkHost is set, the user
+	// and token are required. ListmonkHost goes through
+	// requireHTTPSExceptLoopback, since the API token travels with every call.
+	ListmonkHost     string
+	ListmonkAPIUser  string
+	ListmonkAPIToken string
+
+	// OrcaAPIURL/OrcaSyncToken configure the daily orca reconciliation
+	// (GET /sync/newsletter/members with OrcaSyncToken as bearer token).
+	// Optional, but setting one requires the other. OrcaAPIURL goes through
+	// requireHTTPSExceptLoopback, since the bearer token travels with every call.
+	OrcaAPIURL    string
+	OrcaSyncToken string
 }
 
 func envBool(name string) bool {
@@ -126,6 +142,29 @@ func Load() (Config, error) {
 		}
 	}
 
+	listmonkHost := os.Getenv("LISTMONK_HOST")
+	listmonkAPIUser := os.Getenv("LISTMONK_API_USER")
+	listmonkAPIToken := os.Getenv("LISTMONK_API_TOKEN")
+	if listmonkHost != "" {
+		if err := requireHTTPSExceptLoopback(listmonkHost); err != nil {
+			return Config{}, fmt.Errorf("LISTMONK_HOST: %w", err)
+		}
+		if listmonkAPIUser == "" || listmonkAPIToken == "" {
+			return Config{}, fmt.Errorf("LISTMONK_API_USER and LISTMONK_API_TOKEN are required when LISTMONK_HOST is set")
+		}
+	}
+
+	orcaAPIURL := os.Getenv("ORCA_API_URL")
+	orcaSyncToken := os.Getenv("ORCA_SYNC_TOKEN")
+	if (orcaAPIURL == "") != (orcaSyncToken == "") {
+		return Config{}, fmt.Errorf("ORCA_API_URL and ORCA_SYNC_TOKEN must be set together")
+	}
+	if orcaAPIURL != "" {
+		if err := requireHTTPSExceptLoopback(orcaAPIURL); err != nil {
+			return Config{}, fmt.Errorf("ORCA_API_URL: %w", err)
+		}
+	}
+
 	return Config{
 		DatabaseURL:        databaseURL,
 		Addr:               ":" + port,
@@ -135,5 +174,10 @@ func Load() (Config, error) {
 		KeycloakRealm:      keycloakRealm,
 		KeycloakClientID:   keycloakClientID,
 		CorsAllowedOrigins: corsAllowedOrigins,
+		ListmonkHost:       listmonkHost,
+		ListmonkAPIUser:    listmonkAPIUser,
+		ListmonkAPIToken:   listmonkAPIToken,
+		OrcaAPIURL:         orcaAPIURL,
+		OrcaSyncToken:      orcaSyncToken,
 	}, nil
 }

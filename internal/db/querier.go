@@ -6,17 +6,126 @@ package db
 
 import (
 	"context"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
+	// Takes the next due job and leases it: next_attempt_at moves past the
+	// lease so no other run picks it up meanwhile. The returned updated_at
+	// identifies this claim (see DeleteFinishedJob).
+	ClaimDueJob(ctx context.Context, leaseSeconds int32) (ProviderJob, error)
 	// Written by the handler.AuditLog middleware once per authenticated
 	// POST/PUT/PATCH/DELETE request, after the handler has responded.
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
+	CreateMember(ctx context.Context, arg CreateMemberParams) (Subscriber, error)
+	// Listmonk subscription import: someone added in the Listmonk UI.
+	CreateNonMember(ctx context.Context, arg CreateNonMemberParams) (Subscriber, error)
+	CreateRule(ctx context.Context, arg CreateRuleParams) (SubscriptionRule, error)
+	// The database clock, for comparing with updated_at columns it sets.
+	DBNow(ctx context.Context) (time.Time, error)
+	DecidePendingChange(ctx context.Context, arg DecidePendingChangeParams) (PendingChange, error)
+	// Deletes a successful job unless it was enqueued again while it ran
+	// (updated_at moved), in which case it stays pending and runs again.
+	DeleteFinishedJob(ctx context.Context, arg DeleteFinishedJobParams) (int64, error)
+	// A pending list_removed whose list Listmonk returns again is obsolete.
+	DeleteResolvedListRemovedChanges(ctx context.Context, seenListmonkIds []int32) (int64, error)
+	DeleteRule(ctx context.Context, id pgtype.UUID) (int64, error)
+	// Subscriptions and pending push jobs cascade. Returns the provider ID for
+	// the delete_subscriber job.
+	DeleteSubscriber(ctx context.Context, id pgtype.UUID) (*int32, error)
+	DeleteSubscriberByMemberNumber(ctx context.Context, memberNumber *int32) (*int32, error)
+	// orca reconciliation, in its transaction: pending member and subscription
+	// changes this run did not detect again (detected_at older than the
+	// transaction) are resolved; drop them so nobody approves a stale change.
+	DeleteUndetectedMemberChanges(ctx context.Context) (int64, error)
+	EnqueueDeleteSubscriber(ctx context.Context, listmonkSubscriberID *int32) error
+	// One push job per subscriber: the worker reads current state when it runs.
+	// A pending job is touched instead (due now, new updated_at), so a worker
+	// already processing it sees the change and keeps it for another run. A
+	// dead push is replaced by the new one.
+	EnqueuePushSubscriber(ctx context.Context, subscriberID pgtype.UUID) error
+	FailJob(ctx context.Context, arg FailJobParams) error
+	// Run once at startup: a run still 'running' was cut off by a crash or restart.
+	FailStaleSyncRuns(ctx context.Context) (int64, error)
+	FinishSyncRun(ctx context.Context, arg FinishSyncRunParams) error
+	GetJob(ctx context.Context, id pgtype.UUID) (ProviderJob, error)
+	GetList(ctx context.Context, id pgtype.UUID) (NewsletterList, error)
+	GetSubscriber(ctx context.Context, id pgtype.UUID) (Subscriber, error)
+	GetSubscriberByEmail(ctx context.Context, email string) (Subscriber, error)
+	GetSubscriberByListmonkID(ctx context.Context, listmonkSubscriberID *int32) (Subscriber, error)
+	GetSubscriberByMemberNumber(ctx context.Context, memberNumber *int32) (Subscriber, error)
+	GetSubscription(ctx context.Context, arg GetSubscriptionParams) (Subscription, error)
+	// Creates a row only; an existing row for the list is left alone.
+	InsertSubscription(ctx context.Context, arg InsertSubscriptionParams) (int64, error)
+	LinkListmonkSubscriber(ctx context.Context, arg LinkListmonkSubscriberParams) error
+	ListAllLists(ctx context.Context) ([]NewsletterList, error)
 	// Admin audit log (GET /audit-logs), newest first. Every filter arg is
 	// nullable — NULL means "don't filter on this". date_from/date_to are
 	// inclusive calendar days, compared against created_at in the session time
 	// zone. limit/offset paging with count(*) OVER () as the total.
 	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]ListAuditLogsRow, error)
+	ListIsActive(ctx context.Context, id pgtype.UUID) (bool, error)
+	// GET /jobs: newest first, with the subscriber for display. status NULL
+	// means every status.
+	ListJobs(ctx context.Context, arg ListJobsParams) ([]ListJobsRow, error)
+	// Subscribed rows on a list whose subscriber is linked to Listmonk, last
+	// changed before changed_before (a row changed later is newer than the
+	// Listmonk data it would be compared with).
+	ListLinkedSubscribedOnList(ctx context.Context, arg ListLinkedSubscribedOnListParams) ([]ListLinkedSubscribedOnListRow, error)
+	// GET /lists/{id}/subscribers: the list's subscriptions with their
+	// subscriber, by name. status NULL means every status. limit/offset paging
+	// with count(*) OVER () as the total.
+	ListListSubscribers(ctx context.Context, arg ListListSubscribersParams) ([]ListListSubscribersRow, error)
+	// Listmonk subscribers we deleted but Listmonk still has until the job runs.
+	ListListmonkIDsWithDeleteJobs(ctx context.Context) ([]int32, error)
+	// Every member's subscriptions, for the orca reconciliation.
+	ListMemberSubscriptions(ctx context.Context) ([]Subscription, error)
+	ListMembers(ctx context.Context) ([]Subscriber, error)
+	// Active Listmonk-linked lists that Listmonk no longer returned.
+	ListMissingListmonkLists(ctx context.Context, seenListmonkIds []int32) ([]ListMissingListmonkListsRow, error)
+	// GET /lists: every list with our subscription counts per status. Deleted
+	// lists only with include_deleted. id narrows it to one list (PUT /lists/{id}
+	// returns the updated list in the same shape).
+	ListNewsletterLists(ctx context.Context, arg ListNewsletterListsParams) ([]ListNewsletterListsRow, error)
+	// GET /changes: newest first, with the list name for list changes. Every
+	// filter is nullable.
+	ListPendingChanges(ctx context.Context, arg ListPendingChangesParams) ([]ListPendingChangesRow, error)
+	// GET /sync-runs: the latest runs of each kind, newest first.
+	ListRecentSyncRuns(ctx context.Context, perKind int32) ([]SyncRun, error)
+	ListRules(ctx context.Context) ([]SubscriptionRule, error)
+	// Subscribers whose unsent (pending or dead) push wins over Listmonk's state.
+	ListSubscriberIDsWithPushJobs(ctx context.Context) ([]pgtype.UUID, error)
+	// A subscriber's subscriptions with their list, for responses and applyMember.
+	ListSubscriptions(ctx context.Context, subscriberID pgtype.UUID) ([]ListSubscriptionsRow, error)
+	LockPendingChange(ctx context.Context, id pgtype.UUID) (PendingChange, error)
+	// Raises a change, or refreshes the payload and detected_at of the same
+	// pending change (kind, member_number, list_id). Not raised when an admin
+	// already rejected the same change with an identical payload. Returns 1
+	// when the change is now pending, 0 when it was suppressed.
+	RaisePendingChange(ctx context.Context, arg RaisePendingChangeParams) (int64, error)
+	// Dead job back to pending, due now, with a fresh attempt count.
+	RetryJob(ctx context.Context, id pgtype.UUID) (ProviderJob, error)
+	RuleExists(ctx context.Context, id pgtype.UUID) (bool, error)
+	SetListmonkStatus(ctx context.Context, arg SetListmonkStatusParams) error
+	// After the worker pushes changes: refresh Listmonk's count only. Creating
+	// lists and synced_at stay with the list sync.
+	SetListmonkSubscriberCount(ctx context.Context, arg SetListmonkSubscriberCountParams) error
+	// Updates a member's data, or turns a non-member subscriber into a member.
+	SetMemberFields(ctx context.Context, arg SetMemberFieldsParams) (Subscriber, error)
+	SetSubscriptionStatus(ctx context.Context, arg SetSubscriptionStatusParams) error
+	SoftDeleteList(ctx context.Context, id pgtype.UUID) error
+	// Fails with a unique violation (sync_runs_running_idx) while another run
+	// of the same kind is still running.
+	StartSyncRun(ctx context.Context, kind string) (pgtype.UUID, error)
+	SyncRunIsRunning(ctx context.Context, kind string) (bool, error)
+	UpdateListVisibility(ctx context.Context, arg UpdateListVisibilityParams) (int64, error)
+	UpdateRule(ctx context.Context, arg UpdateRuleParams) (SubscriptionRule, error)
+	// Listmonk list sync. New lists get the default 'private' visibility; an
+	// existing list keeps its visibility and gets deleted_at cleared if it had
+	// been soft-deleted and reappeared.
+	UpsertListmonkList(ctx context.Context, arg UpsertListmonkListParams) error
 }
 
 var _ Querier = (*Queries)(nil)

@@ -6,6 +6,8 @@
 , keycloakUrl
 , keycloakRealm
 , keycloakClientId
+  # Listmonk admin UI as admins' browsers reach it. Optional: without it, list IDs are not links.
+, listmonkUrl ? ""
 }:
 buildNpmPackage {
   pname = "newsletter-frontend";
@@ -18,6 +20,7 @@ buildNpmPackage {
     VITE_KEYCLOAK_URL = keycloakUrl;
     VITE_KEYCLOAK_REALM = keycloakRealm;
     VITE_KEYCLOAK_CLIENT_ID = keycloakClientId;
+    VITE_LISTMONK_URL = listmonkUrl;
   };
 
   installPhase = ''

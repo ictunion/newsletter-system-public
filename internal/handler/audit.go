@@ -4,9 +4,9 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kubik/newsletter-system/internal/db"
 	"github.com/kubik/newsletter-system/internal/keycloak"
 )
@@ -18,12 +18,24 @@ type AuditCategory string
 const (
 	// AuditCategoryOther is the fallback for a mutating route missing from
 	// auditRoutes — the request is still recorded, just uncategorized.
-	AuditCategoryOther AuditCategory = "other"
+	AuditCategoryOther   AuditCategory = "other"
+	AuditCategoryLists   AuditCategory = "lists"
+	AuditCategorySync    AuditCategory = "sync"
+	AuditCategoryRules   AuditCategory = "rules"
+	AuditCategoryMembers AuditCategory = "members"
+	AuditCategoryJobs    AuditCategory = "jobs"
+	AuditCategoryChanges AuditCategory = "changes"
 )
 
 // AuditCategories lists every category, used to validate the category filter.
 var AuditCategories = []AuditCategory{
 	AuditCategoryOther,
+	AuditCategoryLists,
+	AuditCategorySync,
+	AuditCategoryRules,
+	AuditCategoryMembers,
+	AuditCategoryJobs,
+	AuditCategoryChanges,
 }
 
 type auditAction struct {
@@ -35,7 +47,26 @@ type auditAction struct {
 // API mux in cmd/server/main.go) to its category and action name. A new
 // POST/PUT/PATCH/DELETE route should get an entry here — without one it's
 // still audited, but as AuditCategoryOther with the raw pattern as action.
-var auditRoutes = map[string]auditAction{}
+var auditRoutes = map[string]auditAction{
+	"PUT /lists/{id}":                            {AuditCategoryLists, "update_list"},
+	"PUT /lists/{id}/members/{member_number}":    {AuditCategoryLists, "add_list_member"},
+	"DELETE /lists/{id}/members/{member_number}": {AuditCategoryLists, "remove_list_member"},
+	"POST /sync-runs/{kind}":                     {AuditCategorySync, "trigger_sync"},
+	"POST /rules":                                {AuditCategoryRules, "create_rule"},
+	"PUT /rules/{id}":                            {AuditCategoryRules, "update_rule"},
+	"DELETE /rules/{id}":                         {AuditCategoryRules, "delete_rule"},
+
+	"POST /members":                   {AuditCategoryMembers, "create_member"},
+	"PUT /members/{member_number}":    {AuditCategoryMembers, "update_member"},
+	"DELETE /members/{member_number}": {AuditCategoryMembers, "delete_member"},
+	"DELETE /subscribers/{id}":        {AuditCategoryMembers, "delete_subscriber"},
+
+	"POST /jobs/{id}/retry": {AuditCategoryJobs, "retry_job"},
+
+	"POST /changes/{id}/approve": {AuditCategoryChanges, "approve_change"},
+	"POST /changes/{id}/reject":  {AuditCategoryChanges, "reject_change"},
+	"POST /changes/approve":      {AuditCategoryChanges, "approve_changes"},
+}
 
 // auditRecord is placed on the request context by AuditLog and filled in by
 // withClaims once an auth wrapper has verified the caller.
@@ -152,16 +183,16 @@ type auditLogsResponse struct {
 }
 
 type auditLogItem struct {
-	ID         int64     `json:"id"`
-	CreatedAt  time.Time `json:"created_at"`
-	ActorSub   string    `json:"actor_sub"`
-	ActorEmail *string   `json:"actor_email"`
-	Category   string    `json:"category"`
-	Action     string    `json:"action"`
-	Method     string    `json:"method"`
-	Route      string    `json:"route"`
-	Path       string    `json:"path"`
-	StatusCode int32     `json:"status_code"`
+	ID         pgtype.UUID `json:"id" swaggertype:"string" format:"uuid"`
+	CreatedAt  time.Time   `json:"created_at"`
+	ActorSub   string      `json:"actor_sub"`
+	ActorEmail *string     `json:"actor_email"`
+	Category   string      `json:"category"`
+	Action     string      `json:"action"`
+	Method     string      `json:"method"`
+	Route      string      `json:"route"`
+	Path       string      `json:"path"`
+	StatusCode int32       `json:"status_code"`
 }
 
 // ListAuditLogs handles GET /audit-logs — the audit trail of every
@@ -186,11 +217,7 @@ type auditLogItem struct {
 func ListAuditLogs(queries *db.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		queryParams := r.URL.Query()
-
-		params := db.ListAuditLogsParams{
-			Lim: auditLogsDefaultLimit,
-			Off: 0,
-		}
+		var params db.ListAuditLogsParams
 
 		if s := queryParams.Get("category"); s != "" {
 			known := false
@@ -220,24 +247,8 @@ func ListAuditLogs(queries *db.Queries) http.HandlerFunc {
 			return
 		}
 
-		if s := queryParams.Get("limit"); s != "" {
-			n, err := strconv.Atoi(s)
-			if err != nil || n < 1 {
-				writeError(w, http.StatusBadRequest, "limit must be a positive integer")
-				return
-			}
-			if n > auditLogsMaxLimit {
-				n = auditLogsMaxLimit
-			}
-			params.Lim = int32(n)
-		}
-		if s := queryParams.Get("offset"); s != "" {
-			n, err := strconv.Atoi(s)
-			if err != nil || n < 0 {
-				writeError(w, http.StatusBadRequest, "offset must be a non-negative integer")
-				return
-			}
-			params.Off = int32(n)
+		if params.Lim, params.Off, ok = pageParams(w, queryParams, auditLogsDefaultLimit, auditLogsMaxLimit); !ok {
+			return
 		}
 
 		rows, err := queries.ListAuditLogs(r.Context(), params)
