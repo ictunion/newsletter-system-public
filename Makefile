@@ -5,6 +5,9 @@ DB_USER      ?= newsletter_system
 DB_PASSWORD  ?= newsletter_system
 DB_PORT      ?= 5434
 DB_TEST_NAME ?= newsletter_system_test
+LISTMONK_DB  ?= listmonk
+LISTMONK_API_USER  ?= newsletter-system
+LISTMONK_API_TOKEN ?= newsletter-system-dev-token
 PGDATA       := $(CURDIR)/.pgdata
 
 .PHONY: db-init
@@ -86,6 +89,21 @@ start:
 .PHONY: build
 build:
 	go build -o server ./cmd/server
+
+.PHONY: listmonk
+listmonk:
+	@pg_ctl -D "$(PGDATA)" status >/dev/null 2>&1 || $(MAKE) db-start
+	@psql -h localhost -p $(DB_PORT) -U postgres -tc "SELECT 1 FROM pg_roles WHERE rolname='$(LISTMONK_DB)'" | grep -q 1 \
+		|| psql -h localhost -p $(DB_PORT) -U postgres -c "CREATE ROLE $(LISTMONK_DB) LOGIN PASSWORD '$(LISTMONK_DB)'"
+	@psql -h localhost -p $(DB_PORT) -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='$(LISTMONK_DB)'" | grep -q 1 \
+		|| psql -h localhost -p $(DB_PORT) -U postgres -c "CREATE DATABASE $(LISTMONK_DB) OWNER $(LISTMONK_DB)"
+	LISTMONK_ADMIN_USER=admin LISTMONK_ADMIN_PASSWORD=listmonk listmonk --config listmonk.toml --install --idempotent --yes
+	listmonk --config listmonk.toml --upgrade --yes
+	@# Listmonk stores API tokens as sha256 hex (internal/auth HashAPIToken).
+	@psql -h localhost -p $(DB_PORT) -U postgres -d $(LISTMONK_DB) -qc "INSERT INTO users (username, password, email, name, type, user_role_id, status) \
+		VALUES ('$(LISTMONK_API_USER)', encode(sha256('$(LISTMONK_API_TOKEN)'), 'hex'), '$(LISTMONK_API_USER)@localhost', '$(LISTMONK_API_USER)', 'api', \
+		(SELECT id FROM roles WHERE name = 'Super Admin' AND type = 'user'), 'enabled') ON CONFLICT (username) DO NOTHING"
+	listmonk --config listmonk.toml
 
 .PHONY: frontend-install
 frontend-install:

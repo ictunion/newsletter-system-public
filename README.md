@@ -27,6 +27,8 @@ Frontend (API must be running):
 
 Tests: `make test` (creates and migrates a separate test database).
 
+Listmonk (optional, local testing only): `make listmonk` runs a throwaway Listmonk on http://localhost:9000 in the foreground, using the dev Postgres (database `listmonk`, config in [listmonk.toml](listmonk.toml)). It has no SMTP and sends no email. The first run creates the UI login `admin` / `listmonk` and the API user `newsletter-system` with token `newsletter-system-dev-token`, matching `.env.example`.
+
 Newsletter System needs a running Keycloak. It can be started by `make up` in the Main-system repo, or point your `.env` at your own Keycloak instance.
 
 ## Roles

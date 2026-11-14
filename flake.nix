@@ -22,6 +22,7 @@
             goose
             postgresql
             go-swag
+            listmonk
 
             # frontend/ (React + Vite) — bundles npm
             nodejs_22
