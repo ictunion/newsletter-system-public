@@ -54,6 +54,8 @@ func TestRouteRoles(t *testing.T) {
 		{http.MethodPost, "/rules", []keycloak.Role{manage}},
 		{http.MethodPut, "/rules/" + someID, []keycloak.Role{manage}},
 		{http.MethodDelete, "/rules/" + someID, []keycloak.Role{manage}},
+		{http.MethodGet, "/jobs", []keycloak.Role{view}},
+		{http.MethodPost, "/jobs/" + someID + "/retry", []keycloak.Role{manage}},
 		{http.MethodGet, "/sync-runs", []keycloak.Role{view}},
 		{http.MethodPost, "/sync-runs/listmonk_lists", []keycloak.Role{manage}},
 	}

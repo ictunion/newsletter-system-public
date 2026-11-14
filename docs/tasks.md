@@ -101,12 +101,12 @@ For every task that adds routes:
 **Done when:** handler tests pass.
 
 ## 10. Provider worker and jobs API (flow 5)
-- [ ] Worker goroutine:
+- [x] Worker goroutine:
   - claims jobs with `FOR UPDATE SKIP LOCKED` and a lease, and calls Listmonk outside the transaction
   - `push_subscriber`: create, or duplicate email → link → import existing memberships → push; already linked → update, then one `ManageLists` call per status
   - `delete_subscriber`
   - exponential backoff, `dead` after 10 attempts, row deleted on success
-- [ ] `GET /jobs?status=dead`, `POST /jobs/{id}/retry`.
+- [x] `GET /jobs?status=dead`, `POST /jobs/{id}/retry`.
 
 **Done when:** tests against a fake Listmonk cover create, link that keeps opt-outs, unknown Listmonk lists never removed, backoff to `dead`, a `404` on delete counting as success, and retry.
 

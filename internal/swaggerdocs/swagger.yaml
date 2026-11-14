@@ -56,6 +56,55 @@ definitions:
           list.'
         type: integer
     type: object
+  handler.jobItem:
+    properties:
+      attempt_count:
+        type: integer
+      created_at:
+        type: string
+      id:
+        format: uuid
+        type: string
+      kind:
+        enum:
+        - push_subscriber
+        - delete_subscriber
+        type: string
+      last_error:
+        type: string
+      listmonk_subscriber_id:
+        type: integer
+      next_attempt_at:
+        type: string
+      status:
+        enum:
+        - pending
+        - dead
+        type: string
+      subscriber_email:
+        description: The push job's subscriber, for display; null for delete jobs.
+        type: string
+      subscriber_id:
+        format: uuid
+        type: string
+      subscriber_member_number:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  handler.jobsResponse:
+    properties:
+      jobs:
+        items:
+          $ref: '#/definitions/handler.jobItem'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+    type: object
   handler.listItem:
     properties:
       deleted_at:
@@ -408,6 +457,110 @@ paths:
       summary: List audit log
       tags:
       - audit-logs
+  /jobs:
+    get:
+      description: Requires the view-newsletters role. Jobs that push our state to
+        Listmonk, newest first. A job is deleted once it succeeds; a dead one gave
+        up after 10 attempts and waits for a retry.
+      parameters:
+      - description: Only this status
+        enum:
+        - pending
+        - dead
+        in: query
+        name: status
+        type: string
+      - description: Max results, default 100, capped at 500
+        in: query
+        name: limit
+        type: integer
+      - description: Default 0
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.jobsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List provider jobs
+      tags:
+      - jobs
+  /jobs/{id}/retry:
+    post:
+      description: Requires the manage-newsletters role. Puts a dead job back in the
+        queue, due now, with a fresh attempt count, and returns it. 409 when the job
+        is not dead.
+      parameters:
+      - description: Job ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.jobItem'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Retry a dead job
+      tags:
+      - jobs
   /lists:
     get:
       description: Requires the view-newsletters role. Every list with its visibility,

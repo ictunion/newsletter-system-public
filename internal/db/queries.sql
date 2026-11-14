@@ -230,11 +230,18 @@ SET status = sqlc.arg(status), updated_at = now()
 WHERE subscriber_id = sqlc.arg(subscriber_id) AND list_id = sqlc.arg(list_id);
 
 -- name: EnqueuePushSubscriber :exec
--- A pending push for the subscriber already covers this one: the worker
--- reads current state when it runs.
+-- One push job per subscriber: the worker reads current state when it runs.
+-- A pending job is touched instead (due now, new updated_at), so a worker
+-- already processing it sees the change and keeps it for another run. A
+-- dead push is replaced by the new one.
+WITH replaced_dead AS (
+    DELETE FROM provider_jobs
+    WHERE kind = 'push_subscriber' AND status = 'dead' AND subscriber_id = sqlc.arg(subscriber_id)
+)
 INSERT INTO provider_jobs (kind, subscriber_id)
 VALUES ('push_subscriber', sqlc.arg(subscriber_id))
-ON CONFLICT (subscriber_id) WHERE kind = 'push_subscriber' AND status = 'pending' DO NOTHING;
+ON CONFLICT (subscriber_id) WHERE kind = 'push_subscriber' AND status = 'pending'
+DO UPDATE SET next_attempt_at = now(), updated_at = clock_timestamp();
 
 -- name: EnqueueDeleteSubscriber :exec
 INSERT INTO provider_jobs (kind, listmonk_subscriber_id)
@@ -276,3 +283,66 @@ WHERE subscription.list_id = sqlc.arg(list_id)
   AND (sqlc.narg(status)::text IS NULL OR subscription.status = sqlc.narg(status)::text)
 ORDER BY lower(subscriber.name), subscriber.id
 LIMIT sqlc.arg(lim)::int OFFSET sqlc.arg(off)::int;
+
+-- name: ClaimDueJob :one
+-- Takes the next due job and leases it: next_attempt_at moves past the
+-- lease so no other run picks it up meanwhile. The returned updated_at
+-- identifies this claim (see DeleteFinishedJob).
+UPDATE provider_jobs
+SET next_attempt_at = now() + make_interval(secs => sqlc.arg(lease_seconds)::int), updated_at = clock_timestamp()
+WHERE id = (
+    SELECT id FROM provider_jobs
+    WHERE status = 'pending' AND next_attempt_at <= now()
+    ORDER BY next_attempt_at
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING *;
+
+-- name: DeleteFinishedJob :execrows
+-- Deletes a successful job unless it was enqueued again while it ran
+-- (updated_at moved), in which case it stays pending and runs again.
+DELETE FROM provider_jobs WHERE id = sqlc.arg(id) AND updated_at = sqlc.arg(claimed_at);
+
+-- name: FailJob :exec
+UPDATE provider_jobs
+SET attempt_count = attempt_count + 1,
+    last_error = sqlc.arg(last_error),
+    status = CASE WHEN attempt_count + 1 >= sqlc.arg(max_attempts)::int THEN 'dead' ELSE 'pending' END,
+    next_attempt_at = now() + make_interval(secs => sqlc.arg(retry_in_seconds)::int),
+    updated_at = clock_timestamp()
+WHERE id = sqlc.arg(id);
+
+-- name: LinkListmonkSubscriber :exec
+UPDATE subscribers
+SET listmonk_subscriber_id = sqlc.narg(listmonk_subscriber_id), updated_at = now()
+WHERE id = sqlc.arg(id);
+
+-- name: SetListmonkStatus :exec
+UPDATE subscriptions
+SET listmonk_status = sqlc.narg(listmonk_status)
+WHERE subscriber_id = sqlc.arg(subscriber_id) AND list_id = sqlc.arg(list_id);
+
+-- name: ListJobs :many
+-- GET /jobs: newest first, with the subscriber for display. status NULL
+-- means every status.
+SELECT
+    job.*,
+    subscriber.email AS subscriber_email,
+    subscriber.member_number AS subscriber_member_number,
+    count(*) OVER () AS total_count
+FROM provider_jobs AS job
+LEFT JOIN subscribers AS subscriber ON subscriber.id = job.subscriber_id
+WHERE sqlc.narg(status)::text IS NULL OR job.status = sqlc.narg(status)::text
+ORDER BY job.created_at DESC, job.id
+LIMIT sqlc.arg(lim)::int OFFSET sqlc.arg(off)::int;
+
+-- name: RetryJob :one
+-- Dead job back to pending, due now, with a fresh attempt count.
+UPDATE provider_jobs
+SET status = 'pending', attempt_count = 0, next_attempt_at = now(), updated_at = clock_timestamp()
+WHERE id = sqlc.arg(id) AND status = 'dead'
+RETURNING *;
+
+-- name: GetJob :one
+SELECT * FROM provider_jobs WHERE id = sqlc.arg(id);

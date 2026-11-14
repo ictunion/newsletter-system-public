@@ -11,11 +11,18 @@ import (
 )
 
 type Querier interface {
+	// Takes the next due job and leases it: next_attempt_at moves past the
+	// lease so no other run picks it up meanwhile. The returned updated_at
+	// identifies this claim (see DeleteFinishedJob).
+	ClaimDueJob(ctx context.Context, leaseSeconds int32) (ProviderJob, error)
 	// Written by the handler.AuditLog middleware once per authenticated
 	// POST/PUT/PATCH/DELETE request, after the handler has responded.
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
 	CreateMember(ctx context.Context, arg CreateMemberParams) (Subscriber, error)
 	CreateRule(ctx context.Context, arg CreateRuleParams) (SubscriptionRule, error)
+	// Deletes a successful job unless it was enqueued again while it ran
+	// (updated_at moved), in which case it stays pending and runs again.
+	DeleteFinishedJob(ctx context.Context, arg DeleteFinishedJobParams) (int64, error)
 	// A pending list_removed whose list Listmonk returns again is obsolete.
 	DeleteResolvedListRemovedChanges(ctx context.Context, seenListmonkIds []int32) (int64, error)
 	DeleteRule(ctx context.Context, id pgtype.UUID) (int64, error)
@@ -24,12 +31,16 @@ type Querier interface {
 	DeleteSubscriber(ctx context.Context, id pgtype.UUID) (*int32, error)
 	DeleteSubscriberByMemberNumber(ctx context.Context, memberNumber *int32) (*int32, error)
 	EnqueueDeleteSubscriber(ctx context.Context, listmonkSubscriberID *int32) error
-	// A pending push for the subscriber already covers this one: the worker
-	// reads current state when it runs.
+	// One push job per subscriber: the worker reads current state when it runs.
+	// A pending job is touched instead (due now, new updated_at), so a worker
+	// already processing it sees the change and keeps it for another run. A
+	// dead push is replaced by the new one.
 	EnqueuePushSubscriber(ctx context.Context, subscriberID pgtype.UUID) error
+	FailJob(ctx context.Context, arg FailJobParams) error
 	// Run once at startup: a run still 'running' was cut off by a crash or restart.
 	FailStaleSyncRuns(ctx context.Context) (int64, error)
 	FinishSyncRun(ctx context.Context, arg FinishSyncRunParams) error
+	GetJob(ctx context.Context, id pgtype.UUID) (ProviderJob, error)
 	GetList(ctx context.Context, id pgtype.UUID) (NewsletterList, error)
 	GetSubscriber(ctx context.Context, id pgtype.UUID) (Subscriber, error)
 	GetSubscriberByEmail(ctx context.Context, email string) (Subscriber, error)
@@ -37,6 +48,7 @@ type Querier interface {
 	GetSubscription(ctx context.Context, arg GetSubscriptionParams) (Subscription, error)
 	// Creates a row only; an existing row for the list is left alone.
 	InsertSubscription(ctx context.Context, arg InsertSubscriptionParams) (int64, error)
+	LinkListmonkSubscriber(ctx context.Context, arg LinkListmonkSubscriberParams) error
 	ListAllLists(ctx context.Context) ([]NewsletterList, error)
 	// Admin audit log (GET /audit-logs), newest first. Every filter arg is
 	// nullable — NULL means "don't filter on this". date_from/date_to are
@@ -44,6 +56,9 @@ type Querier interface {
 	// zone. limit/offset paging with count(*) OVER () as the total.
 	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]ListAuditLogsRow, error)
 	ListIsActive(ctx context.Context, id pgtype.UUID) (bool, error)
+	// GET /jobs: newest first, with the subscriber for display. status NULL
+	// means every status.
+	ListJobs(ctx context.Context, arg ListJobsParams) ([]ListJobsRow, error)
 	// GET /lists/{id}/subscribers: the list's subscriptions with their
 	// subscriber, by name. status NULL means every status. limit/offset paging
 	// with count(*) OVER () as the total.
@@ -64,6 +79,9 @@ type Querier interface {
 	// the same change with an identical payload. Returns 1 when the change is
 	// now pending, 0 when it was suppressed.
 	RaisePendingChange(ctx context.Context, arg RaisePendingChangeParams) (int64, error)
+	// Dead job back to pending, due now, with a fresh attempt count.
+	RetryJob(ctx context.Context, id pgtype.UUID) (ProviderJob, error)
+	SetListmonkStatus(ctx context.Context, arg SetListmonkStatusParams) error
 	// Updates a member's data, or turns a non-member subscriber into a member.
 	SetMemberFields(ctx context.Context, arg SetMemberFieldsParams) (Subscriber, error)
 	SetSubscriptionStatus(ctx context.Context, arg SetSubscriptionStatusParams) error

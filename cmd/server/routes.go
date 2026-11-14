@@ -49,6 +49,9 @@ func registerRoutes(api *http.ServeMux, appContext context.Context, provider *ke
 	api.HandleFunc("PUT /rules/{id}", manage(handler.UpdateRule(queries)))
 	api.HandleFunc("DELETE /rules/{id}", manage(handler.DeleteRule(queries)))
 
+	api.HandleFunc("GET /jobs", view(handler.ListJobs(queries)))
+	api.HandleFunc("POST /jobs/{id}/retry", manage(handler.RetryJob(queries)))
+
 	api.HandleFunc("GET /sync-runs", view(handler.ListSyncRuns(queries)))
 	api.HandleFunc("POST /sync-runs/{kind}", manage(handler.TriggerSync(appContext, queries, syncs)))
 }

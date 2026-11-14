@@ -20,6 +20,7 @@ import (
 	"github.com/kubik/newsletter-system/internal/listmonk"
 	"github.com/kubik/newsletter-system/internal/members"
 	"github.com/kubik/newsletter-system/internal/syncjob"
+	"github.com/kubik/newsletter-system/internal/worker"
 
 	// Registers the parsed swagger spec with swaggo's global template
 	// registry (see its own init()) — only imported for that side effect,
@@ -63,8 +64,8 @@ func main() {
 	}
 
 	// Listmonk is optional (see config.ListmonkHost): without it, no Listmonk
-	// syncs run or can be triggered. The first run starts right away, in the
-	// background.
+	// syncs run or can be triggered and no provider worker runs. The first
+	// sync starts right away, in the background.
 	syncs := handler.Syncs{}
 	if appConfig.ListmonkHost != "" {
 		listmonkClient := listmonk.New(appConfig.ListmonkHost, appConfig.ListmonkAPIUser, appConfig.ListmonkAPIToken)
@@ -76,8 +77,9 @@ func main() {
 				log.Printf("sync: listmonk lists: %v", err)
 			}
 		})
+		go syncjob.Every(requestContext, worker.PollInterval, worker.Worker{Pool: pool, Listmonk: listmonkClient}.RunDue)
 	} else {
-		log.Print("LISTMONK_HOST not set: Listmonk syncs disabled")
+		log.Print("LISTMONK_HOST not set: Listmonk syncs and the provider worker disabled")
 	}
 
 	keycloakProvider, err := keycloak.NewProvider(appConfig.KeycloakHost, appConfig.KeycloakRealm, appConfig.KeycloakClientID)

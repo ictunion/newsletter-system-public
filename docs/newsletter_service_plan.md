@@ -221,6 +221,10 @@ A goroutine polls every 15s. It claims due jobs with `FOR UPDATE SKIP LOCKED` an
 
 The transaction is short. The Listmonk HTTP call happens **outside** it: claim the job, bump `next_attempt_at` as a lease, commit, call Listmonk, then record the result. Backoff is exponential, from 30s up to 1h. After 10 attempts (about 4h) the job becomes `dead`. These values are constants in code.
 
+**One push job per subscriber.** Enqueueing a push while one is pending touches it (due now, new `updated_at`). The worker deletes a finished job only if `updated_at` still matches its claim, so a change made while the job ran is pushed in another run. Enqueueing also replaces a `dead` push for the same subscriber.
+
+**Listmonk opt-outs win over an unsent push.** Before pushing to a linked subscriber, the worker reads them from Listmonk and imports their memberships (flow 7 steps 2, 3 and 6): a Listmonk opt-out makes our row `unsubscribed`, so `add` never resubscribes someone whose opt-out the 15-minute import hasn't seen yet. Step 4 (Listmonk subscribed, our row `removed`) is not applied here, because our unsent removal wins. A subscriber deleted in the Listmonk UI is unlinked, and the next attempt creates them again.
+
 **The worker only acts on lists we have a row for.** It never removes a Listmonk membership we don't know about. This protects lists an admin just added in the Listmonk UI before the next import.
 
 `push_subscriber`:

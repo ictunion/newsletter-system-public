@@ -12,6 +12,40 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimDueJob = `-- name: ClaimDueJob :one
+UPDATE provider_jobs
+SET next_attempt_at = now() + make_interval(secs => $1::int), updated_at = clock_timestamp()
+WHERE id = (
+    SELECT id FROM provider_jobs
+    WHERE status = 'pending' AND next_attempt_at <= now()
+    ORDER BY next_attempt_at
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING id, kind, subscriber_id, listmonk_subscriber_id, status, attempt_count, next_attempt_at, last_error, created_at, updated_at
+`
+
+// Takes the next due job and leases it: next_attempt_at moves past the
+// lease so no other run picks it up meanwhile. The returned updated_at
+// identifies this claim (see DeleteFinishedJob).
+func (q *Queries) ClaimDueJob(ctx context.Context, leaseSeconds int32) (ProviderJob, error) {
+	row := q.db.QueryRow(ctx, claimDueJob, leaseSeconds)
+	var i ProviderJob
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.SubscriberID,
+		&i.ListmonkSubscriberID,
+		&i.Status,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createAuditLog = `-- name: CreateAuditLog :exec
 INSERT INTO audit_logs (
     actor_sub, actor_email,
@@ -127,6 +161,25 @@ func (q *Queries) CreateRule(ctx context.Context, arg CreateRuleParams) (Subscri
 	return i, err
 }
 
+const deleteFinishedJob = `-- name: DeleteFinishedJob :execrows
+DELETE FROM provider_jobs WHERE id = $1 AND updated_at = $2
+`
+
+type DeleteFinishedJobParams struct {
+	ID        pgtype.UUID `json:"id"`
+	ClaimedAt time.Time   `json:"claimed_at"`
+}
+
+// Deletes a successful job unless it was enqueued again while it ran
+// (updated_at moved), in which case it stays pending and runs again.
+func (q *Queries) DeleteFinishedJob(ctx context.Context, arg DeleteFinishedJobParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteFinishedJob, arg.ID, arg.ClaimedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteResolvedListRemovedChanges = `-- name: DeleteResolvedListRemovedChanges :execrows
 DELETE FROM pending_changes AS change
 USING newsletter_lists AS list
@@ -192,15 +245,49 @@ func (q *Queries) EnqueueDeleteSubscriber(ctx context.Context, listmonkSubscribe
 }
 
 const enqueuePushSubscriber = `-- name: EnqueuePushSubscriber :exec
+WITH replaced_dead AS (
+    DELETE FROM provider_jobs
+    WHERE kind = 'push_subscriber' AND status = 'dead' AND subscriber_id = $1
+)
 INSERT INTO provider_jobs (kind, subscriber_id)
 VALUES ('push_subscriber', $1)
-ON CONFLICT (subscriber_id) WHERE kind = 'push_subscriber' AND status = 'pending' DO NOTHING
+ON CONFLICT (subscriber_id) WHERE kind = 'push_subscriber' AND status = 'pending'
+DO UPDATE SET next_attempt_at = now(), updated_at = clock_timestamp()
 `
 
-// A pending push for the subscriber already covers this one: the worker
-// reads current state when it runs.
+// One push job per subscriber: the worker reads current state when it runs.
+// A pending job is touched instead (due now, new updated_at), so a worker
+// already processing it sees the change and keeps it for another run. A
+// dead push is replaced by the new one.
 func (q *Queries) EnqueuePushSubscriber(ctx context.Context, subscriberID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, enqueuePushSubscriber, subscriberID)
+	return err
+}
+
+const failJob = `-- name: FailJob :exec
+UPDATE provider_jobs
+SET attempt_count = attempt_count + 1,
+    last_error = $1,
+    status = CASE WHEN attempt_count + 1 >= $2::int THEN 'dead' ELSE 'pending' END,
+    next_attempt_at = now() + make_interval(secs => $3::int),
+    updated_at = clock_timestamp()
+WHERE id = $4
+`
+
+type FailJobParams struct {
+	LastError      *string     `json:"last_error"`
+	MaxAttempts    int32       `json:"max_attempts"`
+	RetryInSeconds int32       `json:"retry_in_seconds"`
+	ID             pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) FailJob(ctx context.Context, arg FailJobParams) error {
+	_, err := q.db.Exec(ctx, failJob,
+		arg.LastError,
+		arg.MaxAttempts,
+		arg.RetryInSeconds,
+		arg.ID,
+	)
 	return err
 }
 
@@ -246,6 +333,28 @@ func (q *Queries) FinishSyncRun(ctx context.Context, arg FinishSyncRunParams) er
 		arg.ID,
 	)
 	return err
+}
+
+const getJob = `-- name: GetJob :one
+SELECT id, kind, subscriber_id, listmonk_subscriber_id, status, attempt_count, next_attempt_at, last_error, created_at, updated_at FROM provider_jobs WHERE id = $1
+`
+
+func (q *Queries) GetJob(ctx context.Context, id pgtype.UUID) (ProviderJob, error) {
+	row := q.db.QueryRow(ctx, getJob, id)
+	var i ProviderJob
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.SubscriberID,
+		&i.ListmonkSubscriberID,
+		&i.Status,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getList = `-- name: GetList :one
@@ -393,6 +502,22 @@ func (q *Queries) InsertSubscription(ctx context.Context, arg InsertSubscription
 	return result.RowsAffected(), nil
 }
 
+const linkListmonkSubscriber = `-- name: LinkListmonkSubscriber :exec
+UPDATE subscribers
+SET listmonk_subscriber_id = $1, updated_at = now()
+WHERE id = $2
+`
+
+type LinkListmonkSubscriberParams struct {
+	ListmonkSubscriberID *int32      `json:"listmonk_subscriber_id"`
+	ID                   pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) LinkListmonkSubscriber(ctx context.Context, arg LinkListmonkSubscriberParams) error {
+	_, err := q.db.Exec(ctx, linkListmonkSubscriber, arg.ListmonkSubscriberID, arg.ID)
+	return err
+}
+
 const listAllLists = `-- name: ListAllLists :many
 SELECT id, name, description, visibility, listmonk_id, listmonk_subscriber_count, synced_at, deleted_at, created_at, updated_at FROM newsletter_lists ORDER BY name, id
 `
@@ -525,6 +650,77 @@ func (q *Queries) ListIsActive(ctx context.Context, id pgtype.UUID) (bool, error
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const listJobs = `-- name: ListJobs :many
+SELECT
+    job.id, job.kind, job.subscriber_id, job.listmonk_subscriber_id, job.status, job.attempt_count, job.next_attempt_at, job.last_error, job.created_at, job.updated_at,
+    subscriber.email AS subscriber_email,
+    subscriber.member_number AS subscriber_member_number,
+    count(*) OVER () AS total_count
+FROM provider_jobs AS job
+LEFT JOIN subscribers AS subscriber ON subscriber.id = job.subscriber_id
+WHERE $1::text IS NULL OR job.status = $1::text
+ORDER BY job.created_at DESC, job.id
+LIMIT $3::int OFFSET $2::int
+`
+
+type ListJobsParams struct {
+	Status *string `json:"status"`
+	Off    int32   `json:"off"`
+	Lim    int32   `json:"lim"`
+}
+
+type ListJobsRow struct {
+	ID                     pgtype.UUID `json:"id"`
+	Kind                   string      `json:"kind"`
+	SubscriberID           pgtype.UUID `json:"subscriber_id"`
+	ListmonkSubscriberID   *int32      `json:"listmonk_subscriber_id"`
+	Status                 string      `json:"status"`
+	AttemptCount           int32       `json:"attempt_count"`
+	NextAttemptAt          time.Time   `json:"next_attempt_at"`
+	LastError              *string     `json:"last_error"`
+	CreatedAt              time.Time   `json:"created_at"`
+	UpdatedAt              time.Time   `json:"updated_at"`
+	SubscriberEmail        *string     `json:"subscriber_email"`
+	SubscriberMemberNumber *int32      `json:"subscriber_member_number"`
+	TotalCount             int64       `json:"total_count"`
+}
+
+// GET /jobs: newest first, with the subscriber for display. status NULL
+// means every status.
+func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]ListJobsRow, error) {
+	rows, err := q.db.Query(ctx, listJobs, arg.Status, arg.Off, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListJobsRow
+	for rows.Next() {
+		var i ListJobsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.SubscriberID,
+			&i.ListmonkSubscriberID,
+			&i.Status,
+			&i.AttemptCount,
+			&i.NextAttemptAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SubscriberEmail,
+			&i.SubscriberMemberNumber,
+			&i.TotalCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listListSubscribers = `-- name: ListListSubscribers :many
@@ -892,6 +1088,49 @@ func (q *Queries) RaisePendingChange(ctx context.Context, arg RaisePendingChange
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const retryJob = `-- name: RetryJob :one
+UPDATE provider_jobs
+SET status = 'pending', attempt_count = 0, next_attempt_at = now(), updated_at = clock_timestamp()
+WHERE id = $1 AND status = 'dead'
+RETURNING id, kind, subscriber_id, listmonk_subscriber_id, status, attempt_count, next_attempt_at, last_error, created_at, updated_at
+`
+
+// Dead job back to pending, due now, with a fresh attempt count.
+func (q *Queries) RetryJob(ctx context.Context, id pgtype.UUID) (ProviderJob, error) {
+	row := q.db.QueryRow(ctx, retryJob, id)
+	var i ProviderJob
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.SubscriberID,
+		&i.ListmonkSubscriberID,
+		&i.Status,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setListmonkStatus = `-- name: SetListmonkStatus :exec
+UPDATE subscriptions
+SET listmonk_status = $1
+WHERE subscriber_id = $2 AND list_id = $3
+`
+
+type SetListmonkStatusParams struct {
+	ListmonkStatus *string     `json:"listmonk_status"`
+	SubscriberID   pgtype.UUID `json:"subscriber_id"`
+	ListID         pgtype.UUID `json:"list_id"`
+}
+
+func (q *Queries) SetListmonkStatus(ctx context.Context, arg SetListmonkStatusParams) error {
+	_, err := q.db.Exec(ctx, setListmonkStatus, arg.ListmonkStatus, arg.SubscriberID, arg.ListID)
+	return err
 }
 
 const setMemberFields = `-- name: SetMemberFields :one
