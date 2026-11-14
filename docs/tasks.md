@@ -10,18 +10,18 @@ For every task that adds routes:
 ---
 
 ## 1. Goose sequential migrations
-- [ ] Run `goose fix` to convert `20261114000001_audit_logs.sql` to `00001_audit_logs.sql`.
-- [ ] Note in the README that new migrations use `goose -s create <name> sql`.
+- [x] Run `goose fix` to convert `20261114000001_audit_logs.sql` to `00001_audit_logs.sql`.
+- [x] Note in the README that new migrations use `goose -s create <name> sql`.
 
 **Done when:** `make migrate` and `make test` run on a fresh DB.
 
 ## 2. Roles and config
-- [ ] Add `view-newsletters`, `manage-newsletters` and `update-newsletter-members` to `internal/keycloak/keycloak.go`.
-- [ ] Add the config fields:
+- [x] Add `view-newsletters`, `manage-newsletters` and `update-newsletter-members` to `internal/keycloak/keycloak.go`.
+- [x] Add the config fields:
   - `LISTMONK_HOST`, `LISTMONK_API_USER`, `LISTMONK_API_TOKEN`. All are optional, but when `LISTMONK_HOST` is set, the user and token are required.
   - `ORCA_API_URL`, `ORCA_SYNC_TOKEN`. Both are optional, and setting one requires the other.
   - Both URLs go through `requireHTTPSExceptLoopback`.
-- [ ] Update `.env.example`.
+- [x] Update `.env.example`.
 
 **Done when:** `config_test.go` covers the new required and optional combinations and the HTTPS check.
 

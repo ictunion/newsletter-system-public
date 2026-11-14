@@ -35,7 +35,7 @@ Newsletter System needs a running Keycloak. It can be started by `make up` in th
 Every route needs a role from Keycloak (client `newsletter-system`). See [internal/keycloak/keycloak.go](internal/keycloak/keycloak.go) for the list of roles.
 
 ## Adding a route
-1. Add the SQL to `internal/db/queries.sql` (and a migration if needed), run `make sqlc`.
+1. Add the SQL to `internal/db/queries.sql` (and a migration if needed, created with `goose -dir migrations -s create <name> sql` for a sequential number), run `make sqlc`.
 2. Write the handler in `internal/handler`.
 3. Add a role in `internal/keycloak/keycloak.go` if needed.
 4. Register it in `cmd/server/main.go` behind `RequireRole`/`RequireAnyRole`/`RequireAuth`.

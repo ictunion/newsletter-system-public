@@ -36,6 +36,21 @@ const (
 	// RoleViewAuditLogs protects:
 	//   GET /audit-logs
 	RoleViewAuditLogs Role = "view-audit-logs"
+
+	// RoleViewNewsletters protects every newsletter GET route: lists,
+	// subscribers, members, rules, changes, jobs, sync runs.
+	RoleViewNewsletters Role = "view-newsletters"
+
+	// RoleManageNewsletters protects list visibility, list assignment, rules,
+	// change approval, job retry, sync triggers and deletes.
+	RoleManageNewsletters Role = "manage-newsletters"
+
+	// RoleUpdateNewsletterMembers is held by orca admins who accept, edit or
+	// remove members. It protects:
+	//   POST /members
+	//   PUT /members/{member_number}
+	//   DELETE /members/{member_number}
+	RoleUpdateNewsletterMembers Role = "update-newsletter-members"
 )
 
 // Claims is the subset of a Keycloak access token we care about.
