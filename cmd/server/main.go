@@ -18,6 +18,7 @@ import (
 	"github.com/kubik/newsletter-system/internal/handler"
 	"github.com/kubik/newsletter-system/internal/keycloak"
 	"github.com/kubik/newsletter-system/internal/listmonk"
+	"github.com/kubik/newsletter-system/internal/members"
 	"github.com/kubik/newsletter-system/internal/syncjob"
 
 	// Registers the parsed swagger spec with swaggo's global template
@@ -88,7 +89,7 @@ func main() {
 	// frontend at / and forward only /api/ here. Handler patterns below stay
 	// unprefixed; StripPrefix trims /api before matching.
 	api := http.NewServeMux()
-	registerRoutes(api, requestContext, keycloakProvider, db.New(pool), syncs)
+	registerRoutes(api, requestContext, keycloakProvider, pool, syncs, members.Service{PushEnabled: appConfig.ListmonkHost != ""})
 
 	// Dev-only Swagger UI, off by default (see config.EnableSwaggerDocs).
 	// Mounted under /api like everything else, at /api/docs/index.html.

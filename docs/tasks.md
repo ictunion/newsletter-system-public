@@ -78,25 +78,25 @@ For every task that adds routes:
 **Done when:** the table tests and handler tests pass.
 
 ## 8. Members API (flows 1–3)
-- [ ] `applyMember(tx, member)` with tests:
+- [x] `applyMember(tx, member)` with tests:
   - a workplace move removes the old row and adds the new one
   - `unsubscribed`, `removed` and `manual` rows are left alone
   - a push is enqueued only when something changed
-- [ ] `POST /members`:
+- [x] `POST /members`:
   - an existing `member_number` returns `200` and changes nothing
   - an email held by a non-member attaches the member to that row
   - the response carries `unmatched_workplace_newsletter_id`
-- [ ] `PUT /members/{member_number}`: `404` for an unknown member, `409` for an email conflict.
-- [ ] `DELETE /members/{member_number}` and `DELETE /subscribers/{id}`: hard delete plus a `delete_subscriber` job, and `204` even when the record is missing.
-- [ ] `GET /members/{member_number}` and `GET /subscribers/{id}`.
-- [ ] Jobs are enqueued only when Listmonk is configured.
+- [x] `PUT /members/{member_number}`: `404` for an unknown member, `409` for an email conflict.
+- [x] `DELETE /members/{member_number}` and `DELETE /subscribers/{id}`: hard delete plus a `delete_subscriber` job, and `204` even when the record is missing.
+- [x] `GET /members/{member_number}` and `GET /subscribers/{id}`.
+- [x] Jobs are enqueued only when Listmonk is configured.
 
 **Done when:** handler tests pass on `dbtest` + `keycloaktest`, including role checks for `update-newsletter-members` vs `manage-newsletters`.
 
 ## 9. List assignment API (flow 4)
-- [ ] `PUT /lists/{id}/members/{member_number}`: revives a `removed` row, returns `409` on an `unsubscribed` row, and creates new rows as `manual`.
-- [ ] `DELETE /lists/{id}/members/{member_number}`: sets the row to `removed`.
-- [ ] `GET /lists/{id}/subscribers` with `?status=` and `limit`/`offset`.
+- [x] `PUT /lists/{id}/members/{member_number}`: revives a `removed` row, returns `409` on an `unsubscribed` row, and creates new rows as `manual`.
+- [x] `DELETE /lists/{id}/members/{member_number}`: sets the row to `removed`.
+- [x] `GET /lists/{id}/subscribers` with `?status=` and `limit`/`offset`.
 
 **Done when:** handler tests pass.
 

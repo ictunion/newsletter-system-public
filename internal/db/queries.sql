@@ -168,3 +168,111 @@ DELETE FROM subscription_rules WHERE id = sqlc.arg(id);
 
 -- name: ListIsActive :one
 SELECT EXISTS (SELECT 1 FROM newsletter_lists WHERE id = sqlc.arg(id) AND deleted_at IS NULL);
+
+-- name: GetSubscriber :one
+SELECT * FROM subscribers WHERE id = sqlc.arg(id);
+
+-- name: GetSubscriberByMemberNumber :one
+SELECT * FROM subscribers WHERE member_number = sqlc.arg(member_number);
+
+-- name: GetSubscriberByEmail :one
+SELECT * FROM subscribers WHERE lower(email) = lower(sqlc.arg(email));
+
+-- name: CreateMember :one
+INSERT INTO subscribers (email, name, member_number, first_name, last_name, city, lang)
+VALUES (sqlc.arg(email), sqlc.arg(name), sqlc.arg(member_number), sqlc.arg(first_name), sqlc.arg(last_name), sqlc.narg(city), sqlc.arg(lang))
+RETURNING *;
+
+-- name: SetMemberFields :one
+-- Updates a member's data, or turns a non-member subscriber into a member.
+UPDATE subscribers
+SET email = sqlc.arg(email),
+    name = sqlc.arg(name),
+    member_number = sqlc.arg(member_number),
+    first_name = sqlc.arg(first_name),
+    last_name = sqlc.arg(last_name),
+    city = sqlc.narg(city),
+    lang = sqlc.arg(lang),
+    updated_at = now()
+WHERE id = sqlc.arg(id)
+RETURNING *;
+
+-- name: ListAllLists :many
+SELECT * FROM newsletter_lists ORDER BY name, id;
+
+-- name: ListSubscriptions :many
+-- A subscriber's subscriptions with their list, for responses and applyMember.
+SELECT
+    subscription.list_id,
+    list.name AS list_name,
+    list.listmonk_id,
+    list.deleted_at AS list_deleted_at,
+    subscription.status,
+    subscription.source,
+    subscription.rule_id,
+    subscription.listmonk_status,
+    subscription.created_at,
+    subscription.updated_at
+FROM subscriptions AS subscription
+JOIN newsletter_lists AS list ON list.id = subscription.list_id
+WHERE subscription.subscriber_id = sqlc.arg(subscriber_id)
+ORDER BY list.name, list.id;
+
+-- name: InsertSubscription :execrows
+-- Creates a row only; an existing row for the list is left alone.
+INSERT INTO subscriptions (subscriber_id, list_id, status, source, rule_id)
+VALUES (sqlc.arg(subscriber_id), sqlc.arg(list_id), sqlc.arg(status), sqlc.arg(source), sqlc.narg(rule_id))
+ON CONFLICT (subscriber_id, list_id) DO NOTHING;
+
+-- name: SetSubscriptionStatus :exec
+UPDATE subscriptions
+SET status = sqlc.arg(status), updated_at = now()
+WHERE subscriber_id = sqlc.arg(subscriber_id) AND list_id = sqlc.arg(list_id);
+
+-- name: EnqueuePushSubscriber :exec
+-- A pending push for the subscriber already covers this one: the worker
+-- reads current state when it runs.
+INSERT INTO provider_jobs (kind, subscriber_id)
+VALUES ('push_subscriber', sqlc.arg(subscriber_id))
+ON CONFLICT (subscriber_id) WHERE kind = 'push_subscriber' AND status = 'pending' DO NOTHING;
+
+-- name: EnqueueDeleteSubscriber :exec
+INSERT INTO provider_jobs (kind, listmonk_subscriber_id)
+VALUES ('delete_subscriber', sqlc.arg(listmonk_subscriber_id));
+
+-- name: DeleteSubscriber :one
+-- Subscriptions and pending push jobs cascade. Returns the provider ID for
+-- the delete_subscriber job.
+DELETE FROM subscribers WHERE id = sqlc.arg(id) RETURNING listmonk_subscriber_id;
+
+-- name: DeleteSubscriberByMemberNumber :one
+DELETE FROM subscribers WHERE member_number = sqlc.arg(member_number) RETURNING listmonk_subscriber_id;
+
+-- name: GetList :one
+SELECT * FROM newsletter_lists WHERE id = sqlc.arg(id);
+
+-- name: GetSubscription :one
+SELECT * FROM subscriptions WHERE subscriber_id = sqlc.arg(subscriber_id) AND list_id = sqlc.arg(list_id);
+
+-- name: ListListSubscribers :many
+-- GET /lists/{id}/subscribers: the list's subscriptions with their
+-- subscriber, by name. status NULL means every status. limit/offset paging
+-- with count(*) OVER () as the total.
+SELECT
+    subscriber.id AS subscriber_id,
+    subscriber.email,
+    subscriber.name,
+    subscriber.member_number,
+    subscription.status,
+    subscription.source,
+    subscription.rule_id,
+    subscription.listmonk_status,
+    subscription.created_at,
+    subscription.updated_at,
+    count(*) OVER () AS total_count
+FROM subscriptions AS subscription
+JOIN subscribers AS subscriber ON subscriber.id = subscription.subscriber_id
+WHERE subscription.list_id = sqlc.arg(list_id)
+  AND (sqlc.narg(status)::text IS NULL OR subscription.status = sqlc.narg(status)::text)
+ORDER BY lower(subscriber.name), subscriber.id
+LIMIT sqlc.arg(lim)::int OFFSET sqlc.arg(off)::int;

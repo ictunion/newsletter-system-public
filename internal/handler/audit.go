@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -19,10 +18,11 @@ type AuditCategory string
 const (
 	// AuditCategoryOther is the fallback for a mutating route missing from
 	// auditRoutes — the request is still recorded, just uncategorized.
-	AuditCategoryOther AuditCategory = "other"
-	AuditCategoryLists AuditCategory = "lists"
-	AuditCategorySync  AuditCategory = "sync"
-	AuditCategoryRules AuditCategory = "rules"
+	AuditCategoryOther   AuditCategory = "other"
+	AuditCategoryLists   AuditCategory = "lists"
+	AuditCategorySync    AuditCategory = "sync"
+	AuditCategoryRules   AuditCategory = "rules"
+	AuditCategoryMembers AuditCategory = "members"
 )
 
 // AuditCategories lists every category, used to validate the category filter.
@@ -31,6 +31,7 @@ var AuditCategories = []AuditCategory{
 	AuditCategoryLists,
 	AuditCategorySync,
 	AuditCategoryRules,
+	AuditCategoryMembers,
 }
 
 type auditAction struct {
@@ -43,11 +44,18 @@ type auditAction struct {
 // POST/PUT/PATCH/DELETE route should get an entry here — without one it's
 // still audited, but as AuditCategoryOther with the raw pattern as action.
 var auditRoutes = map[string]auditAction{
-	"PUT /lists/{id}":        {AuditCategoryLists, "update_list"},
-	"POST /sync-runs/{kind}": {AuditCategorySync, "trigger_sync"},
-	"POST /rules":            {AuditCategoryRules, "create_rule"},
-	"PUT /rules/{id}":        {AuditCategoryRules, "update_rule"},
-	"DELETE /rules/{id}":     {AuditCategoryRules, "delete_rule"},
+	"PUT /lists/{id}":                            {AuditCategoryLists, "update_list"},
+	"PUT /lists/{id}/members/{member_number}":    {AuditCategoryLists, "add_list_member"},
+	"DELETE /lists/{id}/members/{member_number}": {AuditCategoryLists, "remove_list_member"},
+	"POST /sync-runs/{kind}":                     {AuditCategorySync, "trigger_sync"},
+	"POST /rules":                                {AuditCategoryRules, "create_rule"},
+	"PUT /rules/{id}":                            {AuditCategoryRules, "update_rule"},
+	"DELETE /rules/{id}":                         {AuditCategoryRules, "delete_rule"},
+
+	"POST /members":                   {AuditCategoryMembers, "create_member"},
+	"PUT /members/{member_number}":    {AuditCategoryMembers, "update_member"},
+	"DELETE /members/{member_number}": {AuditCategoryMembers, "delete_member"},
+	"DELETE /subscribers/{id}":        {AuditCategoryMembers, "delete_subscriber"},
 }
 
 // auditRecord is placed on the request context by AuditLog and filled in by
@@ -199,11 +207,7 @@ type auditLogItem struct {
 func ListAuditLogs(queries *db.Queries) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		queryParams := r.URL.Query()
-
-		params := db.ListAuditLogsParams{
-			Lim: auditLogsDefaultLimit,
-			Off: 0,
-		}
+		var params db.ListAuditLogsParams
 
 		if s := queryParams.Get("category"); s != "" {
 			known := false
@@ -233,24 +237,8 @@ func ListAuditLogs(queries *db.Queries) http.HandlerFunc {
 			return
 		}
 
-		if s := queryParams.Get("limit"); s != "" {
-			n, err := strconv.Atoi(s)
-			if err != nil || n < 1 {
-				writeError(w, http.StatusBadRequest, "limit must be a positive integer")
-				return
-			}
-			if n > auditLogsMaxLimit {
-				n = auditLogsMaxLimit
-			}
-			params.Lim = int32(n)
-		}
-		if s := queryParams.Get("offset"); s != "" {
-			n, err := strconv.Atoi(s)
-			if err != nil || n < 0 {
-				writeError(w, http.StatusBadRequest, "offset must be a non-negative integer")
-				return
-			}
-			params.Off = int32(n)
+		if params.Lim, params.Off, ok = pageParams(w, queryParams, auditLogsDefaultLimit, auditLogsMaxLimit); !ok {
+			return
 		}
 
 		rows, err := queries.ListAuditLogs(r.Context(), params)

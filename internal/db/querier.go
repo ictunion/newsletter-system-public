@@ -14,19 +14,40 @@ type Querier interface {
 	// Written by the handler.AuditLog middleware once per authenticated
 	// POST/PUT/PATCH/DELETE request, after the handler has responded.
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
+	CreateMember(ctx context.Context, arg CreateMemberParams) (Subscriber, error)
 	CreateRule(ctx context.Context, arg CreateRuleParams) (SubscriptionRule, error)
 	// A pending list_removed whose list Listmonk returns again is obsolete.
 	DeleteResolvedListRemovedChanges(ctx context.Context, seenListmonkIds []int32) (int64, error)
 	DeleteRule(ctx context.Context, id pgtype.UUID) (int64, error)
+	// Subscriptions and pending push jobs cascade. Returns the provider ID for
+	// the delete_subscriber job.
+	DeleteSubscriber(ctx context.Context, id pgtype.UUID) (*int32, error)
+	DeleteSubscriberByMemberNumber(ctx context.Context, memberNumber *int32) (*int32, error)
+	EnqueueDeleteSubscriber(ctx context.Context, listmonkSubscriberID *int32) error
+	// A pending push for the subscriber already covers this one: the worker
+	// reads current state when it runs.
+	EnqueuePushSubscriber(ctx context.Context, subscriberID pgtype.UUID) error
 	// Run once at startup: a run still 'running' was cut off by a crash or restart.
 	FailStaleSyncRuns(ctx context.Context) (int64, error)
 	FinishSyncRun(ctx context.Context, arg FinishSyncRunParams) error
+	GetList(ctx context.Context, id pgtype.UUID) (NewsletterList, error)
+	GetSubscriber(ctx context.Context, id pgtype.UUID) (Subscriber, error)
+	GetSubscriberByEmail(ctx context.Context, email string) (Subscriber, error)
+	GetSubscriberByMemberNumber(ctx context.Context, memberNumber *int32) (Subscriber, error)
+	GetSubscription(ctx context.Context, arg GetSubscriptionParams) (Subscription, error)
+	// Creates a row only; an existing row for the list is left alone.
+	InsertSubscription(ctx context.Context, arg InsertSubscriptionParams) (int64, error)
+	ListAllLists(ctx context.Context) ([]NewsletterList, error)
 	// Admin audit log (GET /audit-logs), newest first. Every filter arg is
 	// nullable — NULL means "don't filter on this". date_from/date_to are
 	// inclusive calendar days, compared against created_at in the session time
 	// zone. limit/offset paging with count(*) OVER () as the total.
 	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]ListAuditLogsRow, error)
 	ListIsActive(ctx context.Context, id pgtype.UUID) (bool, error)
+	// GET /lists/{id}/subscribers: the list's subscriptions with their
+	// subscriber, by name. status NULL means every status. limit/offset paging
+	// with count(*) OVER () as the total.
+	ListListSubscribers(ctx context.Context, arg ListListSubscribersParams) ([]ListListSubscribersRow, error)
 	// Active Listmonk-linked lists that Listmonk no longer returned.
 	ListMissingListmonkLists(ctx context.Context, seenListmonkIds []int32) ([]ListMissingListmonkListsRow, error)
 	// GET /lists: every list with our subscription counts per status. Deleted
@@ -36,11 +57,16 @@ type Querier interface {
 	// GET /sync-runs: the latest runs of each kind, newest first.
 	ListRecentSyncRuns(ctx context.Context, perKind int32) ([]SyncRun, error)
 	ListRules(ctx context.Context) ([]SubscriptionRule, error)
+	// A subscriber's subscriptions with their list, for responses and applyMember.
+	ListSubscriptions(ctx context.Context, subscriberID pgtype.UUID) ([]ListSubscriptionsRow, error)
 	// Raises a change, or refreshes the payload of the same pending change
 	// (kind, member_number, list_id). Not raised when an admin already rejected
 	// the same change with an identical payload. Returns 1 when the change is
 	// now pending, 0 when it was suppressed.
 	RaisePendingChange(ctx context.Context, arg RaisePendingChangeParams) (int64, error)
+	// Updates a member's data, or turns a non-member subscriber into a member.
+	SetMemberFields(ctx context.Context, arg SetMemberFieldsParams) (Subscriber, error)
+	SetSubscriptionStatus(ctx context.Context, arg SetSubscriptionStatusParams) error
 	// Fails with a unique violation (sync_runs_running_idx) while another run
 	// of the same kind is still running.
 	StartSyncRun(ctx context.Context, kind string) (pgtype.UUID, error)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,15 +12,16 @@ import (
 	"github.com/kubik/newsletter-system/internal/handler"
 	"github.com/kubik/newsletter-system/internal/keycloak"
 	"github.com/kubik/newsletter-system/internal/keycloaktest"
+	"github.com/kubik/newsletter-system/internal/members"
 )
 
-// TestRouteRoles checks every route against its required role: a token
-// with every other role gets 403, a token with the required role gets past
+// TestRouteRoles checks every route against its allowed roles: a token with
+// every other role gets 403, a token with any one allowed role gets past
 // auth (any status but 401/403).
 func TestRouteRoles(t *testing.T) {
 	provider := keycloaktest.New(t)
 	api := http.NewServeMux()
-	registerRoutes(api, context.Background(), provider.Provider, dbtest.Tx(t), handler.Syncs{})
+	registerRoutes(api, context.Background(), provider.Provider, dbtest.Pool(t), handler.Syncs{}, members.Service{})
 
 	allRoles := []keycloak.Role{keycloak.RoleViewAuditLogs, keycloak.RoleViewNewsletters, keycloak.RoleManageNewsletters, keycloak.RoleUpdateNewsletterMembers}
 	token := func(roles ...keycloak.Role) string {
@@ -31,36 +33,47 @@ func TestRouteRoles(t *testing.T) {
 	}
 
 	const someID = "00000000-0000-0000-0000-000000000000"
+	view, manage, updateMembers := keycloak.RoleViewNewsletters, keycloak.RoleManageNewsletters, keycloak.RoleUpdateNewsletterMembers
 	routes := []struct {
 		method, path string
-		role         keycloak.Role
+		roles        []keycloak.Role
 	}{
-		{http.MethodGet, "/audit-logs", keycloak.RoleViewAuditLogs},
-		{http.MethodGet, "/lists", keycloak.RoleViewNewsletters},
-		{http.MethodPut, "/lists/" + someID, keycloak.RoleManageNewsletters},
-		{http.MethodGet, "/rules", keycloak.RoleViewNewsletters},
-		{http.MethodPost, "/rules", keycloak.RoleManageNewsletters},
-		{http.MethodPut, "/rules/" + someID, keycloak.RoleManageNewsletters},
-		{http.MethodDelete, "/rules/" + someID, keycloak.RoleManageNewsletters},
-		{http.MethodGet, "/sync-runs", keycloak.RoleViewNewsletters},
-		{http.MethodPost, "/sync-runs/listmonk_lists", keycloak.RoleManageNewsletters},
+		{http.MethodGet, "/audit-logs", []keycloak.Role{keycloak.RoleViewAuditLogs}},
+		{http.MethodGet, "/lists", []keycloak.Role{view}},
+		{http.MethodPut, "/lists/" + someID, []keycloak.Role{manage}},
+		{http.MethodGet, "/lists/" + someID + "/subscribers", []keycloak.Role{view}},
+		{http.MethodPut, "/lists/" + someID + "/members/1", []keycloak.Role{manage}},
+		{http.MethodDelete, "/lists/" + someID + "/members/1", []keycloak.Role{manage}},
+		{http.MethodPost, "/members", []keycloak.Role{updateMembers}},
+		{http.MethodPut, "/members/1", []keycloak.Role{updateMembers}},
+		{http.MethodDelete, "/members/1", []keycloak.Role{updateMembers, manage}},
+		{http.MethodGet, "/members/1", []keycloak.Role{view}},
+		{http.MethodGet, "/subscribers/" + someID, []keycloak.Role{view}},
+		{http.MethodDelete, "/subscribers/" + someID, []keycloak.Role{manage}},
+		{http.MethodGet, "/rules", []keycloak.Role{view}},
+		{http.MethodPost, "/rules", []keycloak.Role{manage}},
+		{http.MethodPut, "/rules/" + someID, []keycloak.Role{manage}},
+		{http.MethodDelete, "/rules/" + someID, []keycloak.Role{manage}},
+		{http.MethodGet, "/sync-runs", []keycloak.Role{view}},
+		{http.MethodPost, "/sync-runs/listmonk_lists", []keycloak.Role{manage}},
 	}
 	for _, route := range routes {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
 			var others []keycloak.Role
 			for _, role := range allRoles {
-				if role != route.role {
+				if !slices.Contains(route.roles, role) {
 					others = append(others, role)
 				}
 			}
-			for _, tt := range []struct {
-				name    string
-				token   string
-				allowed bool
-			}{
-				{"other roles", token(others...), false},
-				{"required role", token(route.role), true},
-			} {
+			type roleCase struct {
+				name, token string
+				allowed     bool
+			}
+			cases := []roleCase{{"other roles", token(others...), false}}
+			for _, role := range route.roles {
+				cases = append(cases, roleCase{string(role), token(role), true})
+			}
+			for _, tt := range cases {
 				recorder := httptest.NewRecorder()
 				request := httptest.NewRequest(route.method, route.path, strings.NewReader(`{}`))
 				request.Header.Set("Authorization", "Bearer "+tt.token)

@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -29,4 +31,28 @@ func dateParam(v string) (pgtype.Date, bool) {
 		return pgtype.Date{}, false
 	}
 	return pgtype.Date{Time: t, Valid: true}, true
+}
+
+// pageParams parses the optional limit/offset query params: limit defaults
+// to defaultLimit and is capped at maxLimit, offset defaults to 0. ok is
+// false (and a 400 already written) for a malformed value.
+func pageParams(w http.ResponseWriter, query url.Values, defaultLimit, maxLimit int32) (limit, offset int32, ok bool) {
+	limit = defaultLimit
+	if s := query.Get("limit"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return 0, 0, false
+		}
+		limit = int32(min(n, int(maxLimit)))
+	}
+	if s := query.Get("offset"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, "offset must be a non-negative integer")
+			return 0, 0, false
+		}
+		offset = int32(n)
+	}
+	return limit, offset, true
 }
