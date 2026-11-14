@@ -37,6 +37,126 @@ definitions:
       total:
         type: integer
     type: object
+  handler.listItem:
+    properties:
+      deleted_at:
+        format: date-time
+        type: string
+      description:
+        type: string
+      id:
+        format: uuid
+        type: string
+      listmonk_id:
+        type: integer
+      listmonk_subscriber_count:
+        type: integer
+      name:
+        type: string
+      removed_count:
+        type: integer
+      subscribed_count:
+        type: integer
+      synced_at:
+        format: date-time
+        type: string
+      unsubscribed_count:
+        type: integer
+      visibility:
+        type: string
+    type: object
+  handler.listsResponse:
+    properties:
+      lists:
+        items:
+          $ref: '#/definitions/handler.listItem'
+        type: array
+    type: object
+  handler.ruleItem:
+    properties:
+      city_contains:
+        type: string
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        format: uuid
+        type: string
+      kind:
+        enum:
+        - all
+        - city
+        type: string
+      list_id:
+        format: uuid
+        type: string
+      note:
+        type: string
+    type: object
+  handler.ruleRequest:
+    properties:
+      city_contains:
+        description: Required for kind city, must be empty for kind all.
+        type: string
+      enabled:
+        description: Defaults to true.
+        type: boolean
+      kind:
+        enum:
+        - all
+        - city
+        type: string
+      list_id:
+        format: uuid
+        type: string
+      note:
+        type: string
+    type: object
+  handler.rulesResponse:
+    properties:
+      rules:
+        items:
+          $ref: '#/definitions/handler.ruleItem'
+        type: array
+    type: object
+  handler.syncRunItem:
+    properties:
+      changes_detected:
+        type: integer
+      error:
+        type: string
+      finished_at:
+        format: date-time
+        type: string
+      id:
+        format: uuid
+        type: string
+      items_fetched:
+        type: integer
+      kind:
+        type: string
+      started_at:
+        type: string
+      status:
+        type: string
+    type: object
+  handler.syncRunsResponse:
+    properties:
+      runs:
+        items:
+          $ref: '#/definitions/handler.syncRunItem'
+        type: array
+    type: object
+  handler.updateListRequest:
+    properties:
+      visibility:
+        enum:
+        - private
+        - members
+        - public
+        type: string
+    type: object
 info:
   contact: {}
   description: 'Newsletter System API. Dev-only documentation (see config.EnableSwaggerDocs):
@@ -105,6 +225,342 @@ paths:
       summary: List audit log
       tags:
       - audit-logs
+  /lists:
+    get:
+      description: Requires the view-newsletters role. Every list with its visibility,
+        our subscription count per status, and Listmonk's own subscriber count, ordered
+        by name. Soft-deleted lists only with include_deleted=true.
+      parameters:
+      - description: Include soft-deleted lists
+        in: query
+        name: include_deleted
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.listsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List newsletter lists
+      tags:
+      - lists
+  /lists/{id}:
+    put:
+      consumes:
+      - application/json
+      description: Requires the manage-newsletters role. Returns the updated list.
+      parameters:
+      - description: List ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New visibility
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.updateListRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.listItem'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Change list visibility
+      tags:
+      - lists
+  /rules:
+    get:
+      description: 'Requires the view-newsletters role. Every rule, oldest first.
+        Rules put members on lists: kind all matches every member, kind city matches
+        members whose city contains city_contains (case- and accent-insensitive).
+        Every matching enabled rule applies.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.rulesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List subscription rules
+      tags:
+      - rules
+    post:
+      consumes:
+      - application/json
+      description: 'Requires the manage-newsletters role. Existing members are not
+        re-evaluated here: the daily orca reconciliation proposes the resulting subscription
+        changes.'
+      parameters:
+      - description: Rule
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.ruleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.ruleItem'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a subscription rule
+      tags:
+      - rules
+  /rules/{id}:
+    delete:
+      description: Requires the manage-newsletters role. Subscriptions the rule created
+        stay; their rule_id becomes null.
+      parameters:
+      - description: Rule ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a subscription rule
+      tags:
+      - rules
+    put:
+      consumes:
+      - application/json
+      description: 'Requires the manage-newsletters role. Replaces every field and
+        returns the updated rule. Existing members are not re-evaluated here: the
+        daily orca reconciliation proposes the resulting subscription changes.'
+      parameters:
+      - description: Rule ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Rule
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.ruleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ruleItem'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Replace a subscription rule
+      tags:
+      - rules
+  /sync-runs:
+    get:
+      description: Requires the view-newsletters role. The latest 10 runs of each
+        sync kind, grouped by kind, newest first.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.syncRunsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List recent sync runs
+      tags:
+      - sync-runs
+  /sync-runs/{kind}:
+    post:
+      description: Requires the manage-newsletters role. Starts the sync in the background
+        and answers 202; the run shows up in GET /sync-runs. 404 for an unknown kind
+        or one whose provider is not configured, 409 while a run of that kind is still
+        running.
+      parameters:
+      - description: Sync kind
+        enum:
+        - listmonk_lists
+        in: path
+        name: kind
+        required: true
+        type: string
+      responses:
+        "202":
+          description: Accepted
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Start a sync now
+      tags:
+      - sync-runs
 securityDefinitions:
   BearerAuth:
     description: 'Keycloak-issued bearer token for newsletter-system''s Keycloak client,

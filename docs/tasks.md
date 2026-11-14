@@ -3,7 +3,7 @@
 Tasks are implemented one at a time, in order. Each one ends green: `make test` passes and `gofmt` is clean. Section names refer to [newsletter_service_plan.md](newsletter_service_plan.md).
 
 For every task that adds routes:
-- Register each route in `cmd/server/main.go` behind the right role.
+- Register each route in `cmd/server/routes.go` behind the right role, and add it to `TestRouteRoles` in `cmd/server/routes_test.go`.
 - Add every mutating route to `auditRoutes`.
 - Run `make swagger`.
 
@@ -59,21 +59,21 @@ For every task that adds routes:
 **Done when:** tests against a fake Listmonk cover upsert, reappear and `list_removed`, and a real sync fills `newsletter_lists`.
 
 ## 6. Lists and sync-runs API
-- [ ] `GET /lists`: visibility, our count per status, `listmonk_subscriber_count`, `?include_deleted=true`.
-- [ ] `PUT /lists/{id}`: change visibility.
-- [ ] `GET /sync-runs`.
-- [ ] `POST /sync-runs/{kind}`. Only `listmonk_lists` is supported for now. Later tasks add the other kinds.
+- [x] `GET /lists`: visibility, our count per status, `listmonk_subscriber_count`, `?include_deleted=true`.
+- [x] `PUT /lists/{id}`: change visibility.
+- [x] `GET /sync-runs`.
+- [x] `POST /sync-runs/{kind}`. Only `listmonk_lists` is supported for now. Later tasks add the other kinds.
 
 **Done when:** handler tests cover the role checks and the response shapes.
 
 ## 7. Rules engine and rules API
-- [ ] Pure function `desiredLists(member, rules, lists)` with table tests:
+- [x] Pure function `desiredLists(member, rules, lists)` with table tests:
   - union of matching rules
   - accent and case insensitivity
   - workplace match by `listmonk_id`
   - unknown workplace ID skipped and reported
   - deleted lists ignored
-- [ ] `GET /rules`, `POST /rules`, `PUT /rules/{id}`, `DELETE /rules/{id}`.
+- [x] `GET /rules`, `POST /rules`, `PUT /rules/{id}`, `DELETE /rules/{id}`.
 
 **Done when:** the table tests and handler tests pass.
 

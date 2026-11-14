@@ -20,11 +20,17 @@ const (
 	// AuditCategoryOther is the fallback for a mutating route missing from
 	// auditRoutes — the request is still recorded, just uncategorized.
 	AuditCategoryOther AuditCategory = "other"
+	AuditCategoryLists AuditCategory = "lists"
+	AuditCategorySync  AuditCategory = "sync"
+	AuditCategoryRules AuditCategory = "rules"
 )
 
 // AuditCategories lists every category, used to validate the category filter.
 var AuditCategories = []AuditCategory{
 	AuditCategoryOther,
+	AuditCategoryLists,
+	AuditCategorySync,
+	AuditCategoryRules,
 }
 
 type auditAction struct {
@@ -36,7 +42,13 @@ type auditAction struct {
 // API mux in cmd/server/main.go) to its category and action name. A new
 // POST/PUT/PATCH/DELETE route should get an entry here — without one it's
 // still audited, but as AuditCategoryOther with the raw pattern as action.
-var auditRoutes = map[string]auditAction{}
+var auditRoutes = map[string]auditAction{
+	"PUT /lists/{id}":        {AuditCategoryLists, "update_list"},
+	"POST /sync-runs/{kind}": {AuditCategorySync, "trigger_sync"},
+	"POST /rules":            {AuditCategoryRules, "create_rule"},
+	"PUT /rules/{id}":        {AuditCategoryRules, "update_rule"},
+	"DELETE /rules/{id}":     {AuditCategoryRules, "delete_rule"},
+}
 
 // auditRecord is placed on the request context by AuditLog and filled in by
 // withClaims once an auth wrapper has verified the caller.

@@ -62,11 +62,16 @@ func main() {
 	}
 
 	// Listmonk is optional (see config.ListmonkHost): without it, no Listmonk
-	// syncs run. The first run starts right away, in the background.
+	// syncs run or can be triggered. The first run starts right away, in the
+	// background.
+	syncs := handler.Syncs{}
 	if appConfig.ListmonkHost != "" {
 		listmonkClient := listmonk.New(appConfig.ListmonkHost, appConfig.ListmonkAPIUser, appConfig.ListmonkAPIToken)
+		syncs[string(syncjob.KindListmonkLists)] = func(ctx context.Context) error {
+			return syncjob.RunListmonkListSync(ctx, pool, listmonkClient)
+		}
 		go syncjob.Every(requestContext, 15*time.Minute, func(ctx context.Context) {
-			if err := syncjob.RunListmonkListSync(ctx, pool, listmonkClient); err != nil {
+			if err := syncs[string(syncjob.KindListmonkLists)](ctx); err != nil {
 				log.Printf("sync: listmonk lists: %v", err)
 			}
 		})
@@ -83,8 +88,7 @@ func main() {
 	// frontend at / and forward only /api/ here. Handler patterns below stay
 	// unprefixed; StripPrefix trims /api before matching.
 	api := http.NewServeMux()
-
-	api.HandleFunc("GET /audit-logs", handler.RequireRole(keycloakProvider, keycloak.RoleViewAuditLogs, handler.ListAuditLogs(db.New(pool))))
+	registerRoutes(api, requestContext, keycloakProvider, db.New(pool), syncs)
 
 	// Dev-only Swagger UI, off by default (see config.EnableSwaggerDocs).
 	// Mounted under /api like everything else, at /api/docs/index.html.

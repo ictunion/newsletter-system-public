@@ -31,8 +31,8 @@ var ErrAlreadyRunning = errors.New("sync already running")
 // FailStaleRuns marks runs left 'running' by a crash or restart as failed.
 // Call it once at startup, before any sync starts.
 //
-// shortcut: assumes a single server instance; with several, one instance's
-// startup would fail another's live run. Use a heartbeat column if we scale out.
+// Assumes a single server instance (the deployment runs one): with several,
+// one instance's startup would fail another's live run.
 func FailStaleRuns(ctx context.Context, queries *db.Queries) error {
 	failed, err := queries.FailStaleSyncRuns(ctx)
 	if failed > 0 {

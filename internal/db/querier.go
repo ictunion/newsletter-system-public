@@ -14,8 +14,10 @@ type Querier interface {
 	// Written by the handler.AuditLog middleware once per authenticated
 	// POST/PUT/PATCH/DELETE request, after the handler has responded.
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
+	CreateRule(ctx context.Context, arg CreateRuleParams) (SubscriptionRule, error)
 	// A pending list_removed whose list Listmonk returns again is obsolete.
 	DeleteResolvedListRemovedChanges(ctx context.Context, seenListmonkIds []int32) (int64, error)
+	DeleteRule(ctx context.Context, id pgtype.UUID) (int64, error)
 	// Run once at startup: a run still 'running' was cut off by a crash or restart.
 	FailStaleSyncRuns(ctx context.Context) (int64, error)
 	FinishSyncRun(ctx context.Context, arg FinishSyncRunParams) error
@@ -24,8 +26,16 @@ type Querier interface {
 	// inclusive calendar days, compared against created_at in the session time
 	// zone. limit/offset paging with count(*) OVER () as the total.
 	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]ListAuditLogsRow, error)
+	ListIsActive(ctx context.Context, id pgtype.UUID) (bool, error)
 	// Active Listmonk-linked lists that Listmonk no longer returned.
 	ListMissingListmonkLists(ctx context.Context, seenListmonkIds []int32) ([]ListMissingListmonkListsRow, error)
+	// GET /lists: every list with our subscription counts per status. Deleted
+	// lists only with include_deleted. id narrows it to one list (PUT /lists/{id}
+	// returns the updated list in the same shape).
+	ListNewsletterLists(ctx context.Context, arg ListNewsletterListsParams) ([]ListNewsletterListsRow, error)
+	// GET /sync-runs: the latest runs of each kind, newest first.
+	ListRecentSyncRuns(ctx context.Context, perKind int32) ([]SyncRun, error)
+	ListRules(ctx context.Context) ([]SubscriptionRule, error)
 	// Raises a change, or refreshes the payload of the same pending change
 	// (kind, member_number, list_id). Not raised when an admin already rejected
 	// the same change with an identical payload. Returns 1 when the change is
@@ -34,6 +44,9 @@ type Querier interface {
 	// Fails with a unique violation (sync_runs_running_idx) while another run
 	// of the same kind is still running.
 	StartSyncRun(ctx context.Context, kind string) (pgtype.UUID, error)
+	SyncRunIsRunning(ctx context.Context, kind string) (bool, error)
+	UpdateListVisibility(ctx context.Context, arg UpdateListVisibilityParams) (int64, error)
+	UpdateRule(ctx context.Context, arg UpdateRuleParams) (SubscriptionRule, error)
 	// Listmonk list sync. New lists get the default 'private' visibility; an
 	// existing list keeps its visibility and gets deleted_at cleared if it had
 	// been soft-deleted and reappeared.

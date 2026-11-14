@@ -38,7 +38,7 @@ Every route needs a role from Keycloak (client `newsletter-system`). See [intern
 1. Add the SQL to `internal/db/queries.sql` (and a migration if needed, created with `goose -dir migrations -s create <name> sql` for a sequential number), run `make sqlc`.
 2. Write the handler in `internal/handler`.
 3. Add a role in `internal/keycloak/keycloak.go` if needed.
-4. Register it in `cmd/server/main.go` behind `RequireRole`/`RequireAnyRole`/`RequireAuth`.
+4. Register it in `cmd/server/routes.go` behind `RequireRole`/`RequireAnyRole`/`RequireAuth`, and add it to the table in `cmd/server/routes_test.go`.
 5. Mutating routes: add an entry to `auditRoutes` in `internal/handler/audit.go`.
 6. Run `make swagger` to refresh the API docs.
 

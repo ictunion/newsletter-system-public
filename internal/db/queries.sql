@@ -103,3 +103,68 @@ WHERE NOT EXISTS (
 )
 ON CONFLICT (kind, member_number, list_id) WHERE status = 'pending'
 DO UPDATE SET payload = EXCLUDED.payload;
+
+-- name: ListNewsletterLists :many
+-- GET /lists: every list with our subscription counts per status. Deleted
+-- lists only with include_deleted. id narrows it to one list (PUT /lists/{id}
+-- returns the updated list in the same shape).
+SELECT
+    list.id,
+    list.name,
+    list.description,
+    list.visibility,
+    list.listmonk_id,
+    list.listmonk_subscriber_count,
+    list.synced_at,
+    list.deleted_at,
+    count(*) FILTER (WHERE subscription.status = 'subscribed') AS subscribed_count,
+    count(*) FILTER (WHERE subscription.status = 'unsubscribed') AS unsubscribed_count,
+    count(*) FILTER (WHERE subscription.status = 'removed') AS removed_count
+FROM newsletter_lists AS list
+LEFT JOIN subscriptions AS subscription ON subscription.list_id = list.id
+WHERE (sqlc.arg(include_deleted)::bool OR list.deleted_at IS NULL)
+  AND (sqlc.narg(id)::uuid IS NULL OR list.id = sqlc.narg(id)::uuid)
+GROUP BY list.id
+ORDER BY list.name, list.id;
+
+-- name: UpdateListVisibility :execrows
+UPDATE newsletter_lists
+SET visibility = sqlc.arg(visibility), updated_at = now()
+WHERE id = sqlc.arg(id);
+
+-- name: ListRecentSyncRuns :many
+-- GET /sync-runs: the latest runs of each kind, newest first.
+SELECT id, kind, status, started_at, finished_at, items_fetched, changes_detected, error
+FROM (
+    SELECT *, row_number() OVER (PARTITION BY kind ORDER BY started_at DESC) AS position
+    FROM sync_runs
+) AS ranked
+WHERE position <= sqlc.arg(per_kind)::int
+ORDER BY kind, started_at DESC;
+
+-- name: SyncRunIsRunning :one
+SELECT EXISTS (SELECT 1 FROM sync_runs WHERE kind = sqlc.arg(kind) AND status = 'running');
+
+-- name: ListRules :many
+SELECT * FROM subscription_rules ORDER BY created_at, id;
+
+-- name: CreateRule :one
+INSERT INTO subscription_rules (kind, list_id, city_contains, enabled, note)
+VALUES (sqlc.arg(kind), sqlc.arg(list_id), sqlc.narg(city_contains), sqlc.arg(enabled), sqlc.narg(note))
+RETURNING *;
+
+-- name: UpdateRule :one
+UPDATE subscription_rules
+SET kind = sqlc.arg(kind),
+    list_id = sqlc.arg(list_id),
+    city_contains = sqlc.narg(city_contains),
+    enabled = sqlc.arg(enabled),
+    note = sqlc.narg(note)
+WHERE id = sqlc.arg(id)
+RETURNING *;
+
+-- name: DeleteRule :execrows
+DELETE FROM subscription_rules WHERE id = sqlc.arg(id);
+
+-- name: ListIsActive :one
+SELECT EXISTS (SELECT 1 FROM newsletter_lists WHERE id = sqlc.arg(id) AND deleted_at IS NULL);
