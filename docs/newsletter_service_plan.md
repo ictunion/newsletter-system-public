@@ -58,6 +58,7 @@ Our own list entity. Provider columns are nullable, so a list can exist without 
 
 - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
 - `name TEXT NOT NULL`
+- `description TEXT NOT NULL DEFAULT ''`: copied from Listmonk by the list sync, `''` when it has none
 - `visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'members', 'public'))`
   - `private`: admins only. This is the default, including for lists the Listmonk sync creates.
   - `members`: visible to members in the future self-management frontend.
@@ -230,7 +231,7 @@ The transaction is short. The Listmonk HTTP call happens **outside** it: claim t
   - `attribs`: `{"lang": ..., "member_number": ...}` for members, `{}` for non-members
 - **Duplicate email:** look the subscriber up and store its ID. Then, **before adding lists**, import their existing Listmonk memberships as in flow 7. A list they already unsubscribed from becomes `unsubscribed` here and is not re-added.
 - **Already linked:**
-  - Update name, email and attribs: `PUT /api/subscribers/{id}`.
+  - Update name, email and attribs: `GET` the subscriber, then `PUT /api/subscribers/{id}` with its current lists and status sent back unchanged (see *Listmonk details*).
   - Then send `PUT /api/subscribers/lists` once per status group:
     - `action: "add"` with `status: "confirmed"` for `subscribed` rows
     - `action: "unsubscribe"` for `unsubscribed` rows
@@ -242,6 +243,7 @@ Dead jobs show up in the frontend. `POST /jobs/{id}/retry` resets them to `pendi
 
 ### 6. Listmonk list sync (every 15m, plus once at startup, non-blocking)
 - `GET /api/lists?per_page=all`, upserted by `listmonk_id`. A list that reappears gets `deleted_at` cleared.
+- `name`, `description` and `listmonk_subscriber_count` are copied on every sync. `visibility` is never touched.
 - New Listmonk lists are created here automatically, as `private`.
 - A list we have but Listmonk no longer returns is **not** soft-deleted automatically. The sync raises a `list_removed` pending change. Approving it sets `deleted_at`.
 
@@ -359,12 +361,15 @@ Set `CORS_ALLOWED_ORIGINS` to orca's admin UI origin. Sync intervals and backoff
 
 ## Listmonk details to verify against our instance
 
-The docs at https://listmonk.app/docs/apis/ leave these unclear:
-- **Auth header.** v4+ API users use `Authorization: token <api_user>:<token>`. Older versions use basic auth. Check our version.
-- **Duplicate email on `POST /api/subscribers`.** It is not documented. orca's current code handles a `409`. Confirm.
-- **Lookup by email.** There is no dedicated endpoint, only `GET /api/subscribers?query=subscribers.email='...'`, which is a raw SQL expression. **Escape single quotes** in the email, or it is an injection into Listmonk's query.
-- **`PUT /api/subscribers/{id}` and lists.** It may replace list membership when `lists` is sent, or clear it when `lists` is omitted. The worker changes lists only through `PUT /api/subscribers/lists`. Confirm the subscriber PUT leaves memberships alone.
-- **`description` on lists.** It is not returned by `GET /api/lists`, so it is not stored.
+Checked against Listmonk v6.2 (the local `make listmonk` instance) on 2026-11-14. `internal/listmonk` follows these answers.
+- **Auth header.** `Authorization: token <api_user>:<token>` works. A wrong token returns `403`.
+- **Duplicate email on `POST /api/subscribers`.** Returns `409` (`"E-mail already exists."`). The check is case-insensitive. The client returns `ErrDuplicateEmail`.
+- **Lookup by email.** `GET /api/subscribers?query=subscribers.email='...'` works. An unescaped quote is a SQL syntax error inside Listmonk (`400`), so the client doubles single quotes. Listmonk stores emails lowercased, so the client lowercases before matching.
+- **`PUT /api/subscribers/{id}` and lists.** It **replaces** the membership set with `lists`: omitting `lists` or sending `[]` clears every membership. Lists that are sent keep their status, including `unsubscribed`. It also sets `status`, so sending `enabled` would undo a blocklist. The client's `UpdateSubscriber` therefore takes the subscriber fresh from `GetSubscriber` and sends its current lists and status back unchanged. Memberships change only through `PUT /api/subscribers/lists`.
+- **`PUT /api/subscribers/lists`.** `add` with `status: confirmed` also resubscribes an `unsubscribed` membership, so it is never sent for our `unsubscribed` rows. `unsubscribe` and `remove` on a list the subscriber is not on do nothing. A missing subscriber ID returns `500`.
+- **Missing subscriber.** `GET` and `PUT /api/subscribers/{id}` return `400` (`"... not found"`), not `404`. The client's `GetSubscriber` queries `subscribers.id=N` instead, and an empty result is `ErrNotFound`. `DELETE` on a missing ID returns `200`. The client accepts `404` too.
+- **`GET /api/subscribers?list_id=X`.** Returns members in every subscription status, blocklisted subscribers included, each with all of their memberships.
+- **`description` on lists.** It is returned by `GET /api/lists` (`""` when empty). The list sync stores it.
 
 Status mapping:
 

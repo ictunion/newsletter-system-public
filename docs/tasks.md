@@ -33,7 +33,7 @@ For every task that adds routes:
 **Done when:** `make migrate` applies, the Down migrations roll back cleanly, and `make psql` shows the schema.
 
 ## 4. Listmonk client (`internal/listmonk`)
-- [ ] Add these calls:
+- [x] Add these calls:
   - `ListLists`
   - `ListSubscribersByList`
   - `CreateSubscriber`
@@ -42,19 +42,19 @@ For every task that adds routes:
   - `UpdateSubscriber`
   - `ManageLists` (`add` / `unsubscribe` / `remove`)
   - `DeleteSubscriber`
-- [ ] A duplicate email returns the sentinel error `ErrDuplicateEmail`.
-- [ ] `DeleteSubscriber` treats a `404` as success.
-- [ ] Tests against an `httptest` fake.
-- [ ] Manually check each item in *Listmonk details to verify against our instance* against our instance. Record the answers in the plan, and adjust the client if needed.
+- [x] A duplicate email returns the sentinel error `ErrDuplicateEmail`.
+- [x] `DeleteSubscriber` treats a `404` as success.
+- [x] Tests against an `httptest` fake.
+- [x] Manually check each item in *Listmonk details to verify against our instance* against our instance. Record the answers in the plan, and adjust the client if needed.
 
 **Done when:** the client tests pass and every open Listmonk item has an answer.
 
 ## 5. Sync runs and Listmonk list sync (flow 6)
-- [ ] `internal/syncjob`:
+- [x] `internal/syncjob`:
   - sync-run bookkeeping
   - `FailStaleRuns` at startup
   - `RunListmonkListSync`: upsert by `listmonk_id`, clear `deleted_at` when a list reappears, create new lists as `private`, raise a `list_removed` pending change for missing lists
-- [ ] Scheduler goroutine in `main.go`: every 15m plus once at startup, non-blocking. It runs only when Listmonk is configured.
+- [x] Scheduler goroutine in `main.go`: every 15m plus once at startup, non-blocking. It runs only when Listmonk is configured.
 
 **Done when:** tests against a fake Listmonk cover upsert, reappear and `list_removed`, and a real sync fills `newsletter_lists`.
 

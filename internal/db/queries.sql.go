@@ -49,6 +49,68 @@ func (q *Queries) CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) 
 	return err
 }
 
+const deleteResolvedListRemovedChanges = `-- name: DeleteResolvedListRemovedChanges :execrows
+DELETE FROM pending_changes AS change
+USING newsletter_lists AS list
+WHERE change.kind = 'list_removed'
+  AND change.status = 'pending'
+  AND change.list_id = list.id
+  AND list.listmonk_id = ANY ($1::int[])
+`
+
+// A pending list_removed whose list Listmonk returns again is obsolete.
+func (q *Queries) DeleteResolvedListRemovedChanges(ctx context.Context, seenListmonkIds []int32) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteResolvedListRemovedChanges, seenListmonkIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const failStaleSyncRuns = `-- name: FailStaleSyncRuns :execrows
+UPDATE sync_runs
+SET status = 'failed', finished_at = now(), error = 'interrupted: server restarted'
+WHERE status = 'running'
+`
+
+// Run once at startup: a run still 'running' was cut off by a crash or restart.
+func (q *Queries) FailStaleSyncRuns(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, failStaleSyncRuns)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishSyncRun = `-- name: FinishSyncRun :exec
+UPDATE sync_runs
+SET status = $1,
+    finished_at = now(),
+    items_fetched = $2,
+    changes_detected = $3,
+    error = $4
+WHERE id = $5
+`
+
+type FinishSyncRunParams struct {
+	Status          string      `json:"status"`
+	ItemsFetched    int32       `json:"items_fetched"`
+	ChangesDetected int32       `json:"changes_detected"`
+	Error           *string     `json:"error"`
+	ID              pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) FinishSyncRun(ctx context.Context, arg FinishSyncRunParams) error {
+	_, err := q.db.Exec(ctx, finishSyncRun,
+		arg.Status,
+		arg.ItemsFetched,
+		arg.ChangesDetected,
+		arg.Error,
+		arg.ID,
+	)
+	return err
+}
+
 const listAuditLogs = `-- name: ListAuditLogs :many
 SELECT
     id,
@@ -135,4 +197,124 @@ func (q *Queries) ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const listMissingListmonkLists = `-- name: ListMissingListmonkLists :many
+SELECT id, name, listmonk_id::int AS listmonk_id
+FROM newsletter_lists
+WHERE listmonk_id IS NOT NULL
+  AND deleted_at IS NULL
+  AND NOT (listmonk_id = ANY ($1::int[]))
+ORDER BY listmonk_id
+`
+
+type ListMissingListmonkListsRow struct {
+	ID         pgtype.UUID `json:"id"`
+	Name       string      `json:"name"`
+	ListmonkID int32       `json:"listmonk_id"`
+}
+
+// Active Listmonk-linked lists that Listmonk no longer returned.
+func (q *Queries) ListMissingListmonkLists(ctx context.Context, seenListmonkIds []int32) ([]ListMissingListmonkListsRow, error) {
+	rows, err := q.db.Query(ctx, listMissingListmonkLists, seenListmonkIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMissingListmonkListsRow
+	for rows.Next() {
+		var i ListMissingListmonkListsRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.ListmonkID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const raisePendingChange = `-- name: RaisePendingChange :execrows
+INSERT INTO pending_changes (kind, member_number, list_id, payload)
+SELECT $1::text, $2::int, $3::uuid, $4::jsonb
+WHERE NOT EXISTS (
+    SELECT 1 FROM pending_changes AS rejected
+    WHERE rejected.status = 'rejected'
+      AND rejected.kind = $1::text
+      AND rejected.member_number IS NOT DISTINCT FROM $2::int
+      AND rejected.list_id IS NOT DISTINCT FROM $3::uuid
+      AND rejected.payload = $4::jsonb
+)
+ON CONFLICT (kind, member_number, list_id) WHERE status = 'pending'
+DO UPDATE SET payload = EXCLUDED.payload
+`
+
+type RaisePendingChangeParams struct {
+	Kind         string      `json:"kind"`
+	MemberNumber *int32      `json:"member_number"`
+	ListID       pgtype.UUID `json:"list_id"`
+	Payload      []byte      `json:"payload"`
+}
+
+// Raises a change, or refreshes the payload of the same pending change
+// (kind, member_number, list_id). Not raised when an admin already rejected
+// the same change with an identical payload. Returns 1 when the change is
+// now pending, 0 when it was suppressed.
+func (q *Queries) RaisePendingChange(ctx context.Context, arg RaisePendingChangeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, raisePendingChange,
+		arg.Kind,
+		arg.MemberNumber,
+		arg.ListID,
+		arg.Payload,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const startSyncRun = `-- name: StartSyncRun :one
+INSERT INTO sync_runs (kind) VALUES ($1) RETURNING id
+`
+
+// Fails with a unique violation (sync_runs_running_idx) while another run
+// of the same kind is still running.
+func (q *Queries) StartSyncRun(ctx context.Context, kind string) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, startSyncRun, kind)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const upsertListmonkList = `-- name: UpsertListmonkList :exec
+INSERT INTO newsletter_lists (name, description, listmonk_id, listmonk_subscriber_count, synced_at)
+VALUES ($1, $2, $3::int, $4::int, now())
+ON CONFLICT (listmonk_id) DO UPDATE
+SET name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    listmonk_subscriber_count = EXCLUDED.listmonk_subscriber_count,
+    synced_at = now(),
+    deleted_at = NULL,
+    updated_at = now()
+`
+
+type UpsertListmonkListParams struct {
+	Name                    string `json:"name"`
+	Description             string `json:"description"`
+	ListmonkID              int32  `json:"listmonk_id"`
+	ListmonkSubscriberCount int32  `json:"listmonk_subscriber_count"`
+}
+
+// Listmonk list sync. New lists get the default 'private' visibility; an
+// existing list keeps its visibility and gets deleted_at cleared if it had
+// been soft-deleted and reappeared.
+func (q *Queries) UpsertListmonkList(ctx context.Context, arg UpsertListmonkListParams) error {
+	_, err := q.db.Exec(ctx, upsertListmonkList,
+		arg.Name,
+		arg.Description,
+		arg.ListmonkID,
+		arg.ListmonkSubscriberCount,
+	)
+	return err
 }

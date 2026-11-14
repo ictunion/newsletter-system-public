@@ -26,6 +26,7 @@ type AuditLog struct {
 type NewsletterList struct {
 	ID                      pgtype.UUID        `json:"id"`
 	Name                    string             `json:"name"`
+	Description             string             `json:"description"`
 	Visibility              string             `json:"visibility"`
 	ListmonkID              *int32             `json:"listmonk_id"`
 	ListmonkSubscriberCount *int32             `json:"listmonk_subscriber_count"`

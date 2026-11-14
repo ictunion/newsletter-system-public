@@ -17,6 +17,8 @@ import (
 	"github.com/kubik/newsletter-system/internal/db"
 	"github.com/kubik/newsletter-system/internal/handler"
 	"github.com/kubik/newsletter-system/internal/keycloak"
+	"github.com/kubik/newsletter-system/internal/listmonk"
+	"github.com/kubik/newsletter-system/internal/syncjob"
 
 	// Registers the parsed swagger spec with swaggo's global template
 	// registry (see its own init()) — only imported for that side effect,
@@ -53,6 +55,23 @@ func main() {
 	defer cancel()
 	if err := pool.Ping(pingContext); err != nil {
 		log.Fatalf("db ping: %v", err)
+	}
+
+	if err := syncjob.FailStaleRuns(requestContext, db.New(pool)); err != nil {
+		log.Fatalf("sync: failing stale runs: %v", err)
+	}
+
+	// Listmonk is optional (see config.ListmonkHost): without it, no Listmonk
+	// syncs run. The first run starts right away, in the background.
+	if appConfig.ListmonkHost != "" {
+		listmonkClient := listmonk.New(appConfig.ListmonkHost, appConfig.ListmonkAPIUser, appConfig.ListmonkAPIToken)
+		go syncjob.Every(requestContext, 15*time.Minute, func(ctx context.Context) {
+			if err := syncjob.RunListmonkListSync(ctx, pool, listmonkClient); err != nil {
+				log.Printf("sync: listmonk lists: %v", err)
+			}
+		})
+	} else {
+		log.Print("LISTMONK_HOST not set: Listmonk syncs disabled")
 	}
 
 	keycloakProvider, err := keycloak.NewProvider(appConfig.KeycloakHost, appConfig.KeycloakRealm, appConfig.KeycloakClientID)

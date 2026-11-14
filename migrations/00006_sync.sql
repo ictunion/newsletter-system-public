@@ -15,6 +15,9 @@ CREATE TABLE sync_runs (
 );
 
 CREATE INDEX sync_runs_kind_started_at_idx ON sync_runs (kind, started_at DESC);
+-- At most one running run per kind: starting a second one fails, so the
+-- scheduler and a manual trigger never overlap.
+CREATE UNIQUE INDEX sync_runs_running_idx ON sync_runs (kind) WHERE status = 'running';
 
 -- pending_changes is drift found by the orca reconciliation or the list
 -- sync, waiting for an admin decision. payload is the orca snapshot or field

@@ -6,17 +6,38 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
 	// Written by the handler.AuditLog middleware once per authenticated
 	// POST/PUT/PATCH/DELETE request, after the handler has responded.
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
+	// A pending list_removed whose list Listmonk returns again is obsolete.
+	DeleteResolvedListRemovedChanges(ctx context.Context, seenListmonkIds []int32) (int64, error)
+	// Run once at startup: a run still 'running' was cut off by a crash or restart.
+	FailStaleSyncRuns(ctx context.Context) (int64, error)
+	FinishSyncRun(ctx context.Context, arg FinishSyncRunParams) error
 	// Admin audit log (GET /audit-logs), newest first. Every filter arg is
 	// nullable — NULL means "don't filter on this". date_from/date_to are
 	// inclusive calendar days, compared against created_at in the session time
 	// zone. limit/offset paging with count(*) OVER () as the total.
 	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]ListAuditLogsRow, error)
+	// Active Listmonk-linked lists that Listmonk no longer returned.
+	ListMissingListmonkLists(ctx context.Context, seenListmonkIds []int32) ([]ListMissingListmonkListsRow, error)
+	// Raises a change, or refreshes the payload of the same pending change
+	// (kind, member_number, list_id). Not raised when an admin already rejected
+	// the same change with an identical payload. Returns 1 when the change is
+	// now pending, 0 when it was suppressed.
+	RaisePendingChange(ctx context.Context, arg RaisePendingChangeParams) (int64, error)
+	// Fails with a unique violation (sync_runs_running_idx) while another run
+	// of the same kind is still running.
+	StartSyncRun(ctx context.Context, kind string) (pgtype.UUID, error)
+	// Listmonk list sync. New lists get the default 'private' visibility; an
+	// existing list keeps its visibility and gets deleted_at cleared if it had
+	// been soft-deleted and reappeared.
+	UpsertListmonkList(ctx context.Context, arg UpsertListmonkListParams) error
 }
 
 var _ Querier = (*Queries)(nil)
