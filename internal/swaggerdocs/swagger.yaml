@@ -1,0 +1,115 @@
+basePath: /api
+definitions:
+  handler.auditLogItem:
+    properties:
+      action:
+        type: string
+      actor_email:
+        type: string
+      actor_sub:
+        type: string
+      category:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: integer
+      method:
+        type: string
+      path:
+        type: string
+      route:
+        type: string
+      status_code:
+        type: integer
+    type: object
+  handler.auditLogsResponse:
+    properties:
+      limit:
+        type: integer
+      logs:
+        items:
+          $ref: '#/definitions/handler.auditLogItem'
+        type: array
+      offset:
+        type: integer
+      total:
+        type: integer
+    type: object
+info:
+  contact: {}
+  description: 'Newsletter System API. Dev-only documentation (see config.EnableSwaggerDocs):
+    every route below requires a Keycloak bearer token unless noted otherwise.'
+  title: Newsletter System API
+  version: "1.0"
+paths:
+  /audit-logs:
+    get:
+      description: Requires the view-audit-logs role. One entry per authenticated
+        POST/PUT/PATCH/DELETE request (who, what, when), newest first. status_code
+        is the response status — rejected attempts are included, filter to 2xx client-side
+        for changes that took effect.
+      parameters:
+      - description: One of handler.AuditCategories
+        in: query
+        name: category
+        type: string
+      - description: Keycloak subject of the caller
+        in: query
+        name: actor_sub
+        type: string
+      - description: YYYY-MM-DD, inclusive
+        in: query
+        name: from
+        type: string
+      - description: YYYY-MM-DD, inclusive
+        in: query
+        name: to
+        type: string
+      - description: Max results, default 100, capped at 500
+        in: query
+        name: limit
+        type: integer
+      - description: Default 0
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.auditLogsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List audit log
+      tags:
+      - audit-logs
+securityDefinitions:
+  BearerAuth:
+    description: 'Keycloak-issued bearer token for newsletter-system''s Keycloak client,
+      sent as `Authorization: Bearer <token>`. Which role(s) a given route requires
+      is noted on that route below — see internal/keycloak.Role for the full list.'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
