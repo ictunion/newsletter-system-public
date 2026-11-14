@@ -26,7 +26,7 @@ export function JobsPage() {
 
   return (
     <>
-      <h2>Listmonk jobs</h2>
+      <h2>Listmonk sync errors</h2>
       <p className="muted">
         Changes waiting to reach Listmonk. A job that failed 10 times is dead and waits for a retry.
       </p>

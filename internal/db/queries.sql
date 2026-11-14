@@ -415,3 +415,10 @@ RETURNING *;
 
 -- name: SoftDeleteList :exec
 UPDATE newsletter_lists SET deleted_at = now(), updated_at = now() WHERE id = sqlc.arg(id) AND deleted_at IS NULL;
+
+-- name: SetListmonkSubscriberCount :exec
+-- After the worker pushes changes: refresh Listmonk's count only. Creating
+-- lists and synced_at stay with the list sync.
+UPDATE newsletter_lists
+SET listmonk_subscriber_count = sqlc.arg(listmonk_subscriber_count)::int
+WHERE listmonk_id = sqlc.arg(listmonk_id)::int;

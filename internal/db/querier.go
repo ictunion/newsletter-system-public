@@ -103,6 +103,9 @@ type Querier interface {
 	// Dead job back to pending, due now, with a fresh attempt count.
 	RetryJob(ctx context.Context, id pgtype.UUID) (ProviderJob, error)
 	SetListmonkStatus(ctx context.Context, arg SetListmonkStatusParams) error
+	// After the worker pushes changes: refresh Listmonk's count only. Creating
+	// lists and synced_at stay with the list sync.
+	SetListmonkSubscriberCount(ctx context.Context, arg SetListmonkSubscriberCountParams) error
 	// Updates a member's data, or turns a non-member subscriber into a member.
 	SetMemberFields(ctx context.Context, arg SetMemberFieldsParams) (Subscriber, error)
 	SetSubscriptionStatus(ctx context.Context, arg SetSubscriptionStatusParams) error

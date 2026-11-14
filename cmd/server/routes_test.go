@@ -25,7 +25,7 @@ func TestRouteRoles(t *testing.T) {
 	api := http.NewServeMux()
 	registerRoutes(api, context.Background(), provider.Provider, dbtest.Pool(t), handler.Syncs{}, members.Service{})
 
-	allRoles := []keycloak.Role{keycloak.RoleViewAuditLogs, keycloak.RoleViewNewsletters, keycloak.RoleManageNewsletters, keycloak.RoleUpdateNewsletterMembers}
+	allRoles := []keycloak.Role{keycloak.RoleViewAuditLogs, keycloak.RoleViewNewsletters, keycloak.RoleManageNewsletters, keycloak.RoleUpdateNewsletterMembers, keycloak.RoleManageRules}
 	token := func(roles ...keycloak.Role) string {
 		names := make([]string, len(roles))
 		for i, role := range roles {
@@ -38,7 +38,7 @@ func TestRouteRoles(t *testing.T) {
 	}
 
 	const someID = "00000000-0000-0000-0000-000000000000"
-	view, manage, updateMembers := keycloak.RoleViewNewsletters, keycloak.RoleManageNewsletters, keycloak.RoleUpdateNewsletterMembers
+	view, manage, updateMembers, manageRules := keycloak.RoleViewNewsletters, keycloak.RoleManageNewsletters, keycloak.RoleUpdateNewsletterMembers, keycloak.RoleManageRules
 	routes := []struct {
 		method, path string
 		roles        []keycloak.Role
@@ -55,10 +55,10 @@ func TestRouteRoles(t *testing.T) {
 		{http.MethodGet, "/members/1", []keycloak.Role{view}},
 		{http.MethodGet, "/subscribers/" + someID, []keycloak.Role{view}},
 		{http.MethodDelete, "/subscribers/" + someID, []keycloak.Role{manage}},
-		{http.MethodGet, "/rules", []keycloak.Role{view}},
-		{http.MethodPost, "/rules", []keycloak.Role{manage}},
-		{http.MethodPut, "/rules/" + someID, []keycloak.Role{manage}},
-		{http.MethodDelete, "/rules/" + someID, []keycloak.Role{manage}},
+		{http.MethodGet, "/rules", []keycloak.Role{view, manageRules}},
+		{http.MethodPost, "/rules", []keycloak.Role{manageRules}},
+		{http.MethodPut, "/rules/" + someID, []keycloak.Role{manageRules}},
+		{http.MethodDelete, "/rules/" + someID, []keycloak.Role{manageRules}},
 		{http.MethodGet, "/changes", []keycloak.Role{view}},
 		{http.MethodPost, "/changes/" + someID + "/approve", []keycloak.Role{manage}},
 		{http.MethodPost, "/changes/" + someID + "/reject", []keycloak.Role{manage}},

@@ -1265,7 +1265,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Requires the view-newsletters role. Every rule, oldest first. Rules put members on lists: kind all matches every member, kind city matches members whose city contains city_contains (case- and accent-insensitive). Every matching enabled rule applies.",
+                "description": "Requires the view-newsletters or manage-rules role. Every rule, oldest first. Rules put members on lists: kind all matches every member, kind city matches members whose city contains city_contains (case- and accent-insensitive). Every matching enabled rule applies.",
                 "produces": [
                     "application/json"
                 ],
@@ -1306,7 +1306,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Requires the manage-newsletters role. Existing members are not re-evaluated here: the daily orca reconciliation proposes the resulting subscription changes.",
+                "description": "Requires the manage-rules role. Existing members are not re-evaluated here: the daily orca reconciliation proposes the resulting subscription changes.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1372,7 +1372,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Requires the manage-newsletters role. Replaces every field and returns the updated rule. Existing members are not re-evaluated here: the daily orca reconciliation proposes the resulting subscription changes.",
+                "description": "Requires the manage-rules role. Replaces every field and returns the updated rule. Existing members are not re-evaluated here: the daily orca reconciliation proposes the resulting subscription changes.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1452,7 +1452,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Requires the manage-newsletters role. Subscriptions the rule created stay; their rule_id becomes null.",
+                "description": "Requires the manage-rules role. Subscriptions the rule created stay; their rule_id becomes null.",
                 "tags": [
                     "rules"
                 ],

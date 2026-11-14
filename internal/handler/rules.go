@@ -41,7 +41,7 @@ type ruleRequest struct {
 // ListRules handles GET /rules.
 //
 // @Summary      List subscription rules
-// @Description  Requires the view-newsletters role. Every rule, oldest first. Rules put members on lists: kind all matches every member, kind city matches members whose city contains city_contains (case- and accent-insensitive). Every matching enabled rule applies.
+// @Description  Requires the view-newsletters or manage-rules role. Every rule, oldest first. Rules put members on lists: kind all matches every member, kind city matches members whose city contains city_contains (case- and accent-insensitive). Every matching enabled rule applies.
 // @Tags         rules
 // @Security     BearerAuth
 // @Produce      json
@@ -66,7 +66,7 @@ func ListRules(queries *db.Queries) http.HandlerFunc {
 // CreateRule handles POST /rules.
 //
 // @Summary      Create a subscription rule
-// @Description  Requires the manage-newsletters role. Existing members are not re-evaluated here: the daily orca reconciliation proposes the resulting subscription changes.
+// @Description  Requires the manage-rules role. Existing members are not re-evaluated here: the daily orca reconciliation proposes the resulting subscription changes.
 // @Tags         rules
 // @Security     BearerAuth
 // @Accept       json
@@ -93,7 +93,7 @@ func CreateRule(queries *db.Queries) http.HandlerFunc {
 // UpdateRule handles PUT /rules/{id}.
 //
 // @Summary      Replace a subscription rule
-// @Description  Requires the manage-newsletters role. Replaces every field and returns the updated rule. Existing members are not re-evaluated here: the daily orca reconciliation proposes the resulting subscription changes.
+// @Description  Requires the manage-rules role. Replaces every field and returns the updated rule. Existing members are not re-evaluated here: the daily orca reconciliation proposes the resulting subscription changes.
 // @Tags         rules
 // @Security     BearerAuth
 // @Accept       json
@@ -131,7 +131,7 @@ func UpdateRule(queries *db.Queries) http.HandlerFunc {
 // DeleteRule handles DELETE /rules/{id}.
 //
 // @Summary      Delete a subscription rule
-// @Description  Requires the manage-newsletters role. Subscriptions the rule created stay; their rule_id becomes null.
+// @Description  Requires the manage-rules role. Subscriptions the rule created stay; their rule_id becomes null.
 // @Tags         rules
 // @Security     BearerAuth
 // @Param        id  path  string  true  "Rule ID (UUID)"

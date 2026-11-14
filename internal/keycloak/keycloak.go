@@ -41,7 +41,7 @@ const (
 	// subscribers, members, rules, changes, jobs, sync runs.
 	RoleViewNewsletters Role = "view-newsletters"
 
-	// RoleManageNewsletters protects list visibility, list assignment, rules,
+	// RoleManageNewsletters protects list visibility, list assignment,
 	// change approval, job retry, sync triggers and deletes.
 	RoleManageNewsletters Role = "manage-newsletters"
 
@@ -51,6 +51,13 @@ const (
 	//   PUT /members/{member_number}
 	//   DELETE /members/{member_number}
 	RoleUpdateNewsletterMembers Role = "update-newsletter-members"
+
+	// RoleManageRules protects:
+	//   POST /rules
+	//   PUT /rules/{id}
+	//   DELETE /rules/{id}
+	// GET /rules also accepts it (next to view-newsletters).
+	RoleManageRules Role = "manage-rules"
 )
 
 // Claims is the subset of a Keycloak access token we care about.

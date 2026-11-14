@@ -1470,6 +1470,24 @@ func (q *Queries) SetListmonkStatus(ctx context.Context, arg SetListmonkStatusPa
 	return err
 }
 
+const setListmonkSubscriberCount = `-- name: SetListmonkSubscriberCount :exec
+UPDATE newsletter_lists
+SET listmonk_subscriber_count = $1::int
+WHERE listmonk_id = $2::int
+`
+
+type SetListmonkSubscriberCountParams struct {
+	ListmonkSubscriberCount int32 `json:"listmonk_subscriber_count"`
+	ListmonkID              int32 `json:"listmonk_id"`
+}
+
+// After the worker pushes changes: refresh Listmonk's count only. Creating
+// lists and synced_at stay with the list sync.
+func (q *Queries) SetListmonkSubscriberCount(ctx context.Context, arg SetListmonkSubscriberCountParams) error {
+	_, err := q.db.Exec(ctx, setListmonkSubscriberCount, arg.ListmonkSubscriberCount, arg.ListmonkID)
+	return err
+}
+
 const setMemberFields = `-- name: SetMemberFields :one
 UPDATE subscribers
 SET email = $1,

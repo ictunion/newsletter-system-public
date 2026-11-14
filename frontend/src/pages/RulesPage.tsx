@@ -2,10 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type FormEvent, useState } from 'react'
 import { apiGet, apiSend, errMessage } from '../api/client'
 import type { ListsResponse, NewsletterList, Rule, RulesResponse } from '../api/types'
-import { ROLE_MANAGE_NEWSLETTERS, useHasRole } from '../roles'
+import { ROLE_MANAGE_RULES, useHasRole } from '../roles'
 
 export function RulesPage() {
-  const canManage = useHasRole(ROLE_MANAGE_NEWSLETTERS)
+  const canManage = useHasRole(ROLE_MANAGE_RULES)
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState<string>() // rule ID, or 'new'
   const rules = useQuery({ queryKey: ['rules'], queryFn: () => apiGet<RulesResponse>('/api/rules') })
@@ -14,6 +14,15 @@ export function RulesPage() {
     queryFn: () => apiGet<ListsResponse>('/api/lists?include_deleted=true'),
   })
   const listByID = new Map(lists.data?.lists.map((list) => [list.id, list]))
+  // Grouped by list, so e.g. "praha" and "prague" rules for one list sit
+  // together; within a list, "all members" first, then cities A-Z.
+  const listName = (rule: Rule) => listByID.get(rule.list_id)?.name ?? ''
+  const sortedRules = [...(rules.data?.rules ?? [])].sort(
+    (a, b) =>
+      listName(a).localeCompare(listName(b), 'cs') ||
+      (a.kind === b.kind ? 0 : a.kind === 'all' ? -1 : 1) ||
+      (a.city_contains ?? '').localeCompare(b.city_contains ?? '', 'cs'),
+  )
   const remove = useMutation({
     mutationFn: (id: string) => apiSend('DELETE', `/api/rules/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rules'] }),
@@ -40,7 +49,7 @@ export function RulesPage() {
           </tr>
         </thead>
         <tbody>
-          {rules.data?.rules.map((rule) =>
+          {sortedRules.map((rule) =>
             editing === rule.id ? (
               <tr key={rule.id}>
                 <td colSpan={5}>

@@ -38,9 +38,16 @@ type Worker struct {
 
 // RunDue runs due jobs one at a time until none is left or ctx is done.
 // Each job is claimed in its own short transaction; Listmonk is called
-// outside any transaction.
+// outside any transaction. If any job succeeded, Listmonk's per-list
+// subscriber counts are refreshed once at the end.
 func (w Worker) RunDue(ctx context.Context) {
 	queries := db.New(w.Pool)
+	succeeded := false
+	defer func() {
+		if succeeded {
+			w.refreshCounts(context.WithoutCancel(ctx))
+		}
+	}()
 	for ctx.Err() == nil {
 		job, err := queries.ClaimDueJob(ctx, leaseSeconds)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -55,6 +62,7 @@ func (w Worker) RunDue(ctx context.Context) {
 		// Record the outcome even if ctx was cancelled mid-job (shutdown).
 		recordContext := context.WithoutCancel(ctx)
 		if jobErr == nil {
+			succeeded = true
 			_, err = queries.DeleteFinishedJob(recordContext, db.DeleteFinishedJobParams{ID: job.ID, ClaimedAt: job.UpdatedAt})
 		} else {
 			log.Printf("worker: %s job %s (attempt %d): %v", job.Kind, job.ID, job.AttemptCount+1, jobErr)
@@ -68,6 +76,26 @@ func (w Worker) RunDue(ctx context.Context) {
 		}
 		if err != nil {
 			log.Printf("worker: recording %s job %s: %v", job.Kind, job.ID, err)
+			return
+		}
+	}
+}
+
+// refreshCounts copies Listmonk's subscriber count of every list we know,
+// so the dashboard's "In Listmonk" reflects pushes right away instead of
+// at the next list sync. Failures are only logged.
+func (w Worker) refreshCounts(ctx context.Context) {
+	lists, err := w.Listmonk.ListLists(ctx)
+	if err != nil {
+		log.Printf("worker: refreshing listmonk counts: %v", err)
+		return
+	}
+	queries := db.New(w.Pool)
+	for _, list := range lists {
+		if err := queries.SetListmonkSubscriberCount(ctx, db.SetListmonkSubscriberCountParams{
+			ListmonkID: int32(list.ID), ListmonkSubscriberCount: int32(list.SubscriberCount),
+		}); err != nil {
+			log.Printf("worker: refreshing listmonk count of list %d: %v", list.ID, err)
 			return
 		}
 	}

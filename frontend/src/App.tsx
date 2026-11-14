@@ -1,6 +1,8 @@
 import { useAuth } from 'react-oidc-context'
 import { Link, Route, Routes } from 'react-router-dom'
 import { AuthGate } from './AuthGate'
+import { MemberSearch } from './components/MemberSearch'
+import { PendingChangesLabel } from './components/PendingChangesLabel'
 import { AuditLogPage } from './pages/AuditLogPage'
 import { ChangesPage } from './pages/ChangesPage'
 import { JobsPage } from './pages/JobsPage'
@@ -9,7 +11,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { ListSubscribersPage } from './pages/ListSubscribersPage'
 import { ListsPage } from './pages/ListsPage'
 import { MemberPage } from './pages/MemberPage'
-import { ROLE_VIEW_AUDIT_LOGS, ROLE_VIEW_NEWSLETTERS, useHasRole } from './roles'
+import { ROLE_MANAGE_RULES, ROLE_VIEW_AUDIT_LOGS, ROLE_VIEW_NEWSLETTERS, useHasRole } from './roles'
 
 export function App() {
   return (
@@ -23,6 +25,8 @@ function Layout() {
   const auth = useAuth()
   const canView = useHasRole(ROLE_VIEW_NEWSLETTERS)
   const canViewAudit = useHasRole(ROLE_VIEW_AUDIT_LOGS)
+  // The rules page also needs view-newsletters, for the list names.
+  const canManageRules = useHasRole(ROLE_MANAGE_RULES) && canView
 
   return (
     <main>
@@ -46,21 +50,17 @@ function Layout() {
                   Dashboard
                 </Link>
                 <Link to="/lists" style={{ color: '#fff' }}>
-                  Lists
-                </Link>
-                <Link to="/members" style={{ color: '#fff' }}>
-                  Members
+                  Newsletters
                 </Link>
                 <Link to="/changes" style={{ color: '#fff' }}>
-                  Changes
-                </Link>
-                <Link to="/jobs" style={{ color: '#fff' }}>
-                  Jobs
-                </Link>
-                <Link to="/rules" style={{ color: '#fff' }}>
-                  Rules
+                  <PendingChangesLabel />
                 </Link>
               </>
+            )}
+            {canManageRules && (
+              <Link to="/rules" style={{ color: '#fff' }}>
+                Rules
+              </Link>
             )}
             {canViewAudit && (
               <Link to="/audit-log" style={{ color: '#fff' }}>
@@ -69,8 +69,9 @@ function Layout() {
             )}
           </nav>
         </div>
-        <span>
-          {auth.user?.profile.email}{' '}
+        <span style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
+          {canView && <MemberSearch />}
+          {auth.user?.profile.email}
           <button onClick={() => void auth.signoutRedirect()}>Sign out</button>
         </span>
       </header>
@@ -85,9 +86,9 @@ function Layout() {
                 <Route path="/members" element={<MemberPage />} />
                 <Route path="/changes" element={<ChangesPage />} />
                 <Route path="/jobs" element={<JobsPage />} />
-                <Route path="/rules" element={<RulesPage />} />
               </>
             )}
+            {canManageRules && <Route path="/rules" element={<RulesPage />} />}
             {canViewAudit && <Route path="/audit-log" element={<AuditLogPage />} />}
             <Route
               path="*"

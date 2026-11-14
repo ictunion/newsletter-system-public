@@ -1,38 +1,28 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type FormEvent, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError, apiGet, apiSend, errMessage } from '../api/client'
 import type { ListsResponse, Rule, RulesResponse, Subscriber, Subscription } from '../api/types'
 import { formatTime } from '../format'
 import { ROLE_MANAGE_NEWSLETTERS, useHasRole } from '../roles'
 
 export function MemberPage() {
-  const [searchParams, setSearchParams] = useSearchParams()
+  // Opened from the header's member search, or a member link elsewhere.
+  const [searchParams] = useSearchParams()
   const number = searchParams.get('number') ?? ''
-  const [input, setInput] = useState(number)
+  const valid = /^\d+$/.test(number)
 
   const member = useQuery({
     queryKey: ['member', number],
     queryFn: () => apiGet<Subscriber>(`/api/members/${number}`),
-    enabled: /^\d+$/.test(number),
+    enabled: valid,
     retry: false,
   })
 
-  function search(e: FormEvent) {
-    e.preventDefault()
-    setSearchParams(input.trim() ? { number: input.trim() } : {})
-  }
-
   return (
     <>
-      <h2>Member lookup</h2>
-      <form onSubmit={search}>
-        <label>
-          Member number{' '}
-          <input value={input} onChange={(e) => setInput(e.target.value)} inputMode="numeric" pattern="\d+" required autoFocus />
-        </label>{' '}
-        <button type="submit">Search</button>
-      </form>
+      <BackLink />
+      {!valid && <p>Enter a member number in the search box at the top.</p>}
       {member.isLoading && <p>Loading…</p>}
       {member.error &&
         (member.error instanceof ApiError && member.error.status === 404 ? (
@@ -42,6 +32,24 @@ export function MemberPage() {
         ))}
       {member.data && <MemberDetail member={member.data} />}
     </>
+  )
+}
+
+// Back to wherever the member was opened from; the dashboard when the page
+// was opened directly (no earlier page in this tab).
+function BackLink() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  return (
+    <p>
+      {location.key === 'default' ? (
+        <Link to="/">← Dashboard</Link>
+      ) : (
+        <button className="link" onClick={() => navigate(-1)}>
+          ← Back
+        </button>
+      )}
+    </p>
   )
 }
 

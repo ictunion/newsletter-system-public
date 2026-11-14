@@ -143,3 +143,7 @@ button.link {
   cursor: pointer;
   font: inherit;
 }
+
+.member-search input {
+  width: 7rem;
+}

@@ -44,10 +44,16 @@ func registerRoutes(api *http.ServeMux, appContext context.Context, provider *ke
 	api.HandleFunc("GET /subscribers/{id}", view(handler.GetSubscriber(queries)))
 	api.HandleFunc("DELETE /subscribers/{id}", manage(handler.DeleteSubscriber(pool, memberService)))
 
-	api.HandleFunc("GET /rules", view(handler.ListRules(queries)))
-	api.HandleFunc("POST /rules", manage(handler.CreateRule(queries)))
-	api.HandleFunc("PUT /rules/{id}", manage(handler.UpdateRule(queries)))
-	api.HandleFunc("DELETE /rules/{id}", manage(handler.DeleteRule(queries)))
+	// Reading rules also serves the member page's rule labels, so
+	// view-newsletters may read them; changing them needs manage-rules.
+	manageRules := func(next http.HandlerFunc) http.HandlerFunc {
+		return handler.RequireRole(provider, keycloak.RoleManageRules, next)
+	}
+	api.HandleFunc("GET /rules", handler.RequireAnyRole(provider,
+		[]keycloak.Role{keycloak.RoleViewNewsletters, keycloak.RoleManageRules}, handler.ListRules(queries)))
+	api.HandleFunc("POST /rules", manageRules(handler.CreateRule(queries)))
+	api.HandleFunc("PUT /rules/{id}", manageRules(handler.UpdateRule(queries)))
+	api.HandleFunc("DELETE /rules/{id}", manageRules(handler.DeleteRule(queries)))
 
 	api.HandleFunc("GET /changes", view(handler.ListChanges(queries)))
 	api.HandleFunc("POST /changes/{id}/approve", manage(handler.ApproveChange(pool, memberService)))

@@ -1,18 +1,41 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { apiGet, errMessage } from '../api/client'
+import { apiGet, apiSend, errMessage } from '../api/client'
 import type { ListsResponse, Page, SyncRun, SyncRunsResponse } from '../api/types'
+import { ListsTable } from '../components/ListsTable'
 import { formatTime } from '../format'
+import { ROLE_MANAGE_NEWSLETTERS, useHasRole } from '../roles'
 
 const SYNC_KINDS: { kind: SyncRun['kind']; label: string }[] = [
-  { kind: 'listmonk_lists', label: 'Listmonk lists' },
+  { kind: 'listmonk_lists', label: 'Listmonk newsletters' },
   { kind: 'listmonk_subscriptions', label: 'Listmonk subscriptions' },
-  { kind: 'orca_members', label: 'orca members' },
+  { kind: 'orca_members', label: 'Orca members' },
 ]
 
 export function DashboardPage() {
   const lists = useQuery({ queryKey: ['lists'], queryFn: () => apiGet<ListsResponse>('/api/lists') })
-  const runs = useQuery({ queryKey: ['sync-runs'], queryFn: () => apiGet<SyncRunsResponse>('/api/sync-runs') })
+  const canManage = useHasRole(ROLE_MANAGE_NEWSLETTERS)
+  const queryClient = useQueryClient()
+  const runs = useQuery({
+    queryKey: ['sync-runs'],
+    queryFn: () => apiGet<SyncRunsResponse>('/api/sync-runs'),
+    // Poll while a sync runs, so its result shows up without a reload.
+    refetchInterval: (query) => (query.state.data?.runs.some((run) => run.status === 'running') ? 2000 : false),
+  })
+  const trigger = useMutation({
+    mutationFn: (kind: SyncRun['kind']) => apiSend('POST', `/api/sync-runs/${kind}`),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['sync-runs'] }),
+  })
+  // When a run finishes, the data it synced is new: refresh everything else.
+  const running = runs.data?.runs.some((run) => run.status === 'running') ?? false
+  const wasRunning = useRef(false)
+  useEffect(() => {
+    if (wasRunning.current && !running) {
+      void queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] !== 'sync-runs' })
+    }
+    wasRunning.current = running
+  }, [running, queryClient])
   // Only the totals are needed: one item per request.
   const pendingChanges = useQuery({
     queryKey: ['changes', 'pending-count'],
@@ -28,22 +51,23 @@ export function DashboardPage() {
       <h2>Dashboard</h2>
       <section className="tiles">
         <Tile to="/changes" label="Pending changes" value={pendingChanges.data?.total} error={pendingChanges.error} />
-        <Tile to="/jobs" label="Dead jobs" value={deadJobs.data?.total} error={deadJobs.error} />
+        <Tile to="/jobs" label="Listmonk sync errors" value={deadJobs.data?.total} error={deadJobs.error} />
       </section>
 
-      <h3>Syncs</h3>
+      {trigger.error && <p className="error">{errMessage(trigger.error)}</p>}
       {runs.error ? (
         <p className="error">{errMessage(runs.error)}</p>
       ) : (
         <table>
           <thead>
             <tr>
-              <th>Sync</th>
+              <th>Sync status</th>
               <th>Last run</th>
               <th>Status</th>
               <th className="number">Fetched</th>
               <th className="number">Changes</th>
               <th>Error</th>
+              {canManage && <th />}
             </tr>
           </thead>
           <tbody>
@@ -58,6 +82,16 @@ export function DashboardPage() {
                   <td className="number">{last?.items_fetched}</td>
                   <td className="number">{last?.changes_detected}</td>
                   <td className="error">{last?.error}</td>
+                  {canManage && (
+                    <td>
+                      <button
+                        disabled={last?.status === 'running' || (trigger.isPending && trigger.variables === kind)}
+                        onClick={() => trigger.mutate(kind)}
+                      >
+                        {last?.status === 'running' ? 'Running…' : 'Run now'}
+                      </button>
+                    </td>
+                  )}
                 </tr>
               )
             })}
@@ -65,42 +99,10 @@ export function DashboardPage() {
         </table>
       )}
 
-      <h3>Lists</h3>
       {lists.error ? (
         <p className="error">{errMessage(lists.error)}</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>List</th>
-              <th className="number">Subscribed</th>
-              <th className="number">Unsubscribed</th>
-              <th className="number" title="Listmonk counts every membership, unsubscribed ones included">
-                In Listmonk
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {lists.data?.lists.map((list) => {
-              // Listmonk's count includes unsubscribed memberships; removed rows are not in Listmonk.
-              const mismatch =
-                list.listmonk_subscriber_count !== null &&
-                list.listmonk_subscriber_count !== list.subscribed_count + list.unsubscribed_count
-              return (
-                <tr key={list.id}>
-                  <td>
-                    <Link to={`/lists/${list.id}`}>{list.name}</Link>
-                  </td>
-                  <td className="number">{list.subscribed_count}</td>
-                  <td className="number">{list.unsubscribed_count}</td>
-                  <td className={mismatch ? 'number mismatch' : 'number'} title={mismatch ? 'Differs from our count' : undefined}>
-                    {list.listmonk_subscriber_count ?? '–'}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+        <ListsTable lists={lists.data?.lists ?? []} />
       )}
     </>
   )

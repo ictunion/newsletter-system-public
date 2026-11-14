@@ -24,3 +24,4 @@ export function useHasRole(role: string): boolean {
 export const ROLE_VIEW_NEWSLETTERS = 'view-newsletters'
 export const ROLE_MANAGE_NEWSLETTERS = 'manage-newsletters'
 export const ROLE_VIEW_AUDIT_LOGS = 'view-audit-logs'
+export const ROLE_MANAGE_RULES = 'manage-rules'

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { apiGet, errMessage } from '../api/client'
 import type { ListsResponse, ListSubscribersResponse, SubscriptionStatus } from '../api/types'
 import { Pager } from '../components/Pager'
@@ -9,7 +9,11 @@ const PAGE_SIZE = 100
 
 export function ListSubscribersPage() {
   const { id } = useParams<{ id: string }>()
-  const [status, setStatus] = useState<SubscriptionStatus | ''>('subscribed')
+  // The status filter lives in the URL (?status=..., 'all' or none for every
+  // status), so dashboard counts can link straight to it.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const statusParam = searchParams.get('status') ?? 'all'
+  const status: SubscriptionStatus | '' = statusParam === 'all' ? '' : (statusParam as SubscriptionStatus)
   const [offset, setOffset] = useState(0)
 
   // The list's name comes from the (usually cached) lists query.
@@ -29,7 +33,7 @@ export function ListSubscribersPage() {
   return (
     <>
       <p>
-        <Link to="/lists">← Lists</Link>
+        <Link to="/lists">← Newsletters</Link>
       </p>
       <h2>{list?.name ?? 'List'}</h2>
       <label>
@@ -37,7 +41,7 @@ export function ListSubscribersPage() {
         <select
           value={status}
           onChange={(e) => {
-            setStatus(e.target.value as SubscriptionStatus | '')
+            setSearchParams({ status: e.target.value || 'all' }, { replace: true })
             setOffset(0)
           }}
         >
@@ -64,7 +68,13 @@ export function ListSubscribersPage() {
             <tr key={subscriber.subscriber_id}>
               <td>{subscriber.name}</td>
               <td>{subscriber.email}</td>
-              <td>{subscriber.member_number ?? 'non-member'}</td>
+              <td>
+                {subscriber.member_number === null ? (
+                  'non-member'
+                ) : (
+                  <Link to={`/members?number=${subscriber.member_number}`}>{subscriber.member_number}</Link>
+                )}
+              </td>
               <td>{subscriber.status}</td>
               <td>{subscriber.source}</td>
               <td>{subscriber.listmonk_status ?? '–'}</td>

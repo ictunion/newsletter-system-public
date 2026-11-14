@@ -292,7 +292,8 @@ New roles in [internal/keycloak/keycloak.go](../internal/keycloak/keycloak.go), 
 | Role | Holder | Grants |
 |---|---|---|
 | `view-newsletters` | admins | all `GET` routes below |
-| `manage-newsletters` | admins | visibility, assignment, rules, change approval, job retry, sync trigger, deletes |
+| `manage-newsletters` | admins | visibility, assignment, change approval, job retry, sync trigger, deletes |
+| `manage-rules` | admins who maintain the rules | `POST /rules`, `PUT /rules/{id}`, `DELETE /rules/{id}`, the rules page; `GET /rules` also accepts `view-newsletters` |
 | `update-newsletter-members` | orca admins who accept, edit or remove members | `POST /members`, `PUT /members/{member_number}`, `DELETE /members/{member_number}` |
 
 Every call carries the token of the admin who started the action. There is no service account. Two kinds of caller:
