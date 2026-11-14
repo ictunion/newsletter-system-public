@@ -57,7 +57,7 @@ func (f fixture) rule(t *testing.T, listmonkID int32) {
 
 func (f fixture) createMember(t *testing.T, email string) db.Subscriber {
 	t.Helper()
-	member := members.Member{MemberNumber: 834, Email: email, FirstName: "Jan", LastName: "Novák", Lang: "cs"}
+	member := members.Member{MemberNumber: 834, Email: email, Name: "Jan Novák", Lang: "cs"}
 	result, err := members.Service{PushEnabled: true}.Create(context.Background(), f.queries, member)
 	if err != nil {
 		t.Fatal(err)

@@ -66,8 +66,6 @@ type Subscriber struct {
 	Email                string      `json:"email"`
 	Name                 string      `json:"name"`
 	MemberNumber         *int32      `json:"member_number"`
-	FirstName            *string     `json:"first_name"`
-	LastName             *string     `json:"last_name"`
 	City                 *string     `json:"city"`
 	Lang                 *string     `json:"lang"`
 	ListmonkSubscriberID *int32      `json:"listmonk_subscriber_id"`

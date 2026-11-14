@@ -37,20 +37,101 @@ definitions:
       total:
         type: integer
     type: object
+  handler.bulkApproveFailed:
+    properties:
+      error:
+        type: string
+      id:
+        format: uuid
+        type: string
+    type: object
+  handler.bulkApproveRequest:
+    properties:
+      ids:
+        items:
+          type: string
+        type: array
+    type: object
+  handler.bulkApproveResponse:
+    properties:
+      approved:
+        items:
+          $ref: '#/definitions/handler.changeItem'
+        type: array
+      failed:
+        items:
+          $ref: '#/definitions/handler.bulkApproveFailed'
+        type: array
+    type: object
+  handler.changeItem:
+    properties:
+      decided_at:
+        format: date-time
+        type: string
+      decided_by:
+        description: Keycloak subject of the deciding admin.
+        type: string
+      detected_at:
+        type: string
+      id:
+        format: uuid
+        type: string
+      kind:
+        enum:
+        - member_new
+        - member_updated
+        - member_removed
+        - subscription_add
+        - subscription_remove
+        - list_removed
+        type: string
+      list_id:
+        format: uuid
+        type: string
+      list_name:
+        description: Set for list changes and subscription changes.
+        type: string
+      member_number:
+        type: integer
+      payload:
+        description: |-
+          member_new, member_updated: orca's member. member_removed: {email, name}.
+          subscription_add: {source, rule_id}. subscription_remove: {source}.
+          list_removed: {listmonk_id, name}.
+        type: object
+      status:
+        enum:
+        - pending
+        - approved
+        - rejected
+        type: string
+    type: object
+  handler.changesResponse:
+    properties:
+      changes:
+        items:
+          $ref: '#/definitions/handler.changeItem'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+    type: object
   handler.createMemberRequest:
     properties:
       city:
         type: string
       email:
         type: string
-      first_name:
-        type: string
       lang:
-        type: string
-      last_name:
         type: string
       member_number:
         type: integer
+      name:
+        description: Full name as the newsletter greets the member.
+        type: string
       workplace_newsletter_id:
         description: 'orca''s workplaces.newsletter_id: the Listmonk ID of the workplace
           list.'
@@ -193,11 +274,10 @@ definitions:
         type: string
       email:
         type: string
-      first_name:
-        type: string
       lang:
         type: string
-      last_name:
+      name:
+        description: Full name as the newsletter greets the member.
         type: string
       workplace_newsletter_id:
         description: 'orca''s workplaces.newsletter_id: the Listmonk ID of the workplace
@@ -212,14 +292,10 @@ definitions:
         type: string
       email:
         type: string
-      first_name:
-        type: string
       id:
         format: uuid
         type: string
       lang:
-        type: string
-      last_name:
         type: string
       listmonk_subscriber_id:
         type: integer
@@ -295,14 +371,10 @@ definitions:
         type: string
       email:
         type: string
-      first_name:
-        type: string
       id:
         format: uuid
         type: string
       lang:
-        type: string
-      last_name:
         type: string
       listmonk_subscriber_id:
         type: integer
@@ -457,6 +529,222 @@ paths:
       summary: List audit log
       tags:
       - audit-logs
+  /changes:
+    get:
+      description: Requires the view-newsletters role. Drift found by the orca reconciliation
+        and the Listmonk list sync, newest first. Pending ones wait for an admin to
+        approve or reject them.
+      parameters:
+      - description: Only this status
+        enum:
+        - pending
+        - approved
+        - rejected
+        in: query
+        name: status
+        type: string
+      - description: Only this kind
+        enum:
+        - member_new
+        - member_updated
+        - member_removed
+        - subscription_add
+        - subscription_remove
+        - list_removed
+        in: query
+        name: kind
+        type: string
+      - description: Max results, default 100, capped at 1000
+        in: query
+        name: limit
+        type: integer
+      - description: Default 0
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.changesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List pending changes
+      tags:
+      - changes
+  /changes/{id}/approve:
+    post:
+      description: Requires the manage-newsletters role. Applies the change (member_new
+        adds the member, member_updated updates them, member_removed deletes them,
+        subscription_add/remove change that one subscription, list_removed soft-deletes
+        the list) and returns it. 409 when it is already decided, or when it can't
+        be applied any more (the error says why); it then stays pending.
+      parameters:
+      - description: Change ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.changeItem'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Approve a pending change
+      tags:
+      - changes
+  /changes/{id}/reject:
+    post:
+      description: Requires the manage-newsletters role. Changes nothing else; the
+        same change with an identical payload is not raised again. Returns the change.
+        409 when it is already decided.
+      parameters:
+      - description: Change ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.changeItem'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Reject a pending change
+      tags:
+      - changes
+  /changes/approve:
+    post:
+      consumes:
+      - application/json
+      description: Requires the manage-newsletters role. Approves each change on its
+        own, as POST /changes/{id}/approve does; one failing does not stop the others.
+        Answers 200 with what was approved and what failed, and why. At most 1000
+        IDs.
+      parameters:
+      - description: Change IDs
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.bulkApproveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.bulkApproveResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Approve several pending changes
+      tags:
+      - changes
   /jobs:
     get:
       description: Requires the view-newsletters role. Jobs that push our state to
@@ -1312,6 +1600,7 @@ paths:
         enum:
         - listmonk_lists
         - listmonk_subscriptions
+        - orca_members
         in: path
         name: kind
         required: true

@@ -73,13 +73,14 @@ Anyone who receives a newsletter. A member is a subscriber with a `member_number
 
 - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
 - `email TEXT NOT NULL`, with a unique index on `lower(email)`
-- `name TEXT NOT NULL`: what goes to the provider. For members it is `first_name || ' ' || last_name`, computed on write.
+- `name TEXT NOT NULL`: what goes to the provider and the newsletter greeting. For members, orca sends it as one field.
 - Member-only fields, NULL for non-members:
   - `member_number INTEGER UNIQUE NULL`
-  - `first_name TEXT NULL`, `last_name TEXT NULL`, `city TEXT NULL`, `lang TEXT NULL`
+  - `city TEXT NULL`: only for `city` rules
+  - `lang TEXT NULL`: sent to Listmonk as `attribs.lang`; newsletters go out separately per language
 - `listmonk_subscriber_id INTEGER UNIQUE NULL`
 - `created_at`, `updated_at`
-- CHECK: `member_number IS NOT NULL` or every other member-only field is NULL. A member also needs `first_name`, `last_name` and `lang`.
+- CHECK: `member_number IS NOT NULL` or every other member-only field is NULL. A member also needs `lang`.
 
 ### `subscriptions`
 One row per subscriber and list. Rows are **never deleted, only re-statused**, except when the subscriber is deleted. That is how the provider sync knows what to remove.
@@ -175,13 +176,14 @@ orca commits the member first, then makes this call synchronously in the same re
 {
   "member_number": 834,
   "email": "jan@example.com",
-  "first_name": "Jan",
-  "last_name": "Novák",
+  "name": "Jan Novák",
   "city": "Praha 4",
   "lang": "cs",
   "workplace_newsletter_id": null
 }
 ```
+
+The body is deliberately minimal: only fields this service uses. `name` is the full name the newsletter uses, `city` feeds `city` rules, `lang` picks the per-language newsletter, `workplace_newsletter_id` picks the workplace list. orca sends nothing else.
 
 - **Idempotent by code check.** If `member_number` already exists, return `200` with the current state and change nothing.
 - **Email belongs to an existing non-member subscriber** (for example someone invited to an event before joining): attach `member_number` and the member fields to that row instead of creating a new one. Their existing `manual` subscriptions stay.
@@ -270,6 +272,10 @@ Pull every active member from orca's sync endpoint: `ORCA_API_URL` + `ORCA_SYNC_
 - `member_updated`: stored fields differ (email, name, city, lang), for example a lost `PUT`. Approving it runs flow 2. A lost workplace change shows up as `subscription_add` / `subscription_remove` instead, since the workplace is not stored.
 - `subscription_add` / `subscription_remove`: the data matches but `desiredLists` differs from our `rule`/`workplace` rows, typically after an admin edits a rule or a lost workplace change. Approving it changes that one row as `applyMember` would. Rows in `unsubscribed`, `removed`, `manual` or `self` are never proposed.
 - `member_removed`: member is here but not in orca, for example a lost `DELETE`. Approving it runs flow 3.
+
+Payloads: `member_new` and `member_updated` carry orca's member (the `POST /members` body); `member_removed` carries our `email` and `name` for display; `subscription_add` carries `source` and `rule_id`; `subscription_remove` carries the row's `source`. orca members that fail validation are logged and skipped, and never count as removed.
+
+Pending member and subscription changes that a run no longer detects are deleted, because the drift is gone (for example orca's lost `PUT` arrived later). That way nobody approves a stale change.
 
 The frontend supports bulk approve, which initial population needs.
 
@@ -387,6 +393,8 @@ Status mapping:
 
 ## orca side (separate work in main-system, listed here only as the contract)
 
+Step-by-step instructions for the orca repo: [orca_changes.md](orca_changes.md).
+
 - **All calls below** run synchronously, right after orca's transaction commits, and forward the admin's `Authorization` header. Use a 5s timeout and only log failures.
 - **Acceptance:** call `POST /api/members`. Delete `orca/src/listmonk/` and the in-transaction subscribe.
   - This is a **hard switch**: it ships together with `newsletter_host` configured. There is no parallel run.
@@ -394,7 +402,7 @@ Status mapping:
 - **Member data change** (workplace assigned, removed or moved; city, email, name or lang): `PUT /api/members/{member_number}`.
 - **Workplace `newsletter_id` changed** (`PATCH /workplaces/{id}`): send `PUT /api/members/{member_number}` for every member of that workplace.
 - **Member leaves:** `DELETE /api/members/{member_number}`, alongside the Keycloak account deletion.
-- **New sync endpoint:** `GET /sync/newsletter/members`, protected by a shared token as in `/sync/bank/members`. It returns active members with the `POST /members` fields.
+- **New sync endpoint:** `GET /sync/newsletter/members`, protected by a shared token as in `/sync/bank/members` (`Authorization: Bearer <ORCA_SYNC_TOKEN>`). It returns active members as a plain JSON array of `POST /members` bodies, for example `[{"member_number": 834, "email": "jan@example.com", "name": "Jan Novák", "city": "Praha 4", "lang": "cs", "workplace_newsletter_id": null}]`.
 - **Admin UI:** list overview, the subscribers of a list, and add/remove a member on a list. It calls this API directly with the admin's token (see Auth).
 - `workplaces.newsletter_id` stays a free int. orca does not validate it. An unknown ID shows up as a warning in this service's logs.
 - orca's `email_subscriptions` table can be dropped on orca's own schedule.

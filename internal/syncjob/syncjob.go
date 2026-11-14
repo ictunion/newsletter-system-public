@@ -106,7 +106,7 @@ func RunListmonkListSync(ctx context.Context, pool *pgxpool.Pool, client *listmo
 			for _, list := range missing {
 				payload, _ := json.Marshal(map[string]any{"listmonk_id": list.ListmonkID, "name": list.Name})
 				raised, err := queries.RaisePendingChange(ctx, db.RaisePendingChangeParams{
-					Kind: "list_removed", ListID: list.ID, Payload: payload,
+					Kind: ChangeListRemoved, ListID: list.ID, Payload: payload,
 				})
 				if err != nil {
 					return fmt.Errorf("raising list_removed for list %d: %w", list.ListmonkID, err)

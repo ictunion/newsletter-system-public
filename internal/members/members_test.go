@@ -56,7 +56,7 @@ func jobCount(t *testing.T, pool *pgxpool.Pool, kind string) int {
 }
 
 func testMember(workplace *int32) Member {
-	return Member{MemberNumber: 834, Email: "jan@example.com", FirstName: "Jan", LastName: "Novák", City: ptr("Praha 4"), Lang: "cs", WorkplaceNewsletterID: workplace}
+	return Member{MemberNumber: 834, Email: "jan@example.com", Name: "Jan Novák", City: ptr("Praha 4"), Lang: "cs", WorkplaceNewsletterID: workplace}
 }
 
 func TestApplyMember_WorkplaceMove(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/mail"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -66,7 +67,7 @@ func (s Service) Create(ctx context.Context, queries *db.Queries, member Member)
 		params := setParams(pgtype.UUID{}, member)
 		subscriber, err = queries.CreateMember(ctx, db.CreateMemberParams{
 			Email: params.Email, Name: params.Name, MemberNumber: params.MemberNumber,
-			FirstName: params.FirstName, LastName: params.LastName, City: params.City, Lang: params.Lang,
+			City: params.City, Lang: params.Lang,
 		})
 	}
 	if err != nil {
@@ -87,7 +88,7 @@ func (s Service) Update(ctx context.Context, queries *db.Queries, member Member)
 		return Result{}, err
 	}
 
-	fieldsChanged := !sameFields(subscriber, member)
+	fieldsChanged := !SameData(subscriber, member)
 	if fieldsChanged {
 		if subscriber, err = queries.SetMemberFields(ctx, setParams(subscriber.ID, member)); err != nil {
 			return Result{}, emailTakenOr(err)
@@ -195,6 +196,49 @@ func (s Service) RemoveFromList(ctx context.Context, queries *db.Queries, listID
 	return s.push(ctx, queries, subscriber.ID)
 }
 
+// AddAutomatic is one subscription_add from the reconciliation: give the
+// member a 'subscribed' row on the list with this source (and rule), unless
+// a row exists by now. Pushes when it inserted one. A list deleted
+// meanwhile is ErrListNotFound.
+func (s Service) AddAutomatic(ctx context.Context, queries *db.Queries, memberNumber int32, listID pgtype.UUID, source string, ruleID pgtype.UUID) error {
+	if list, err := queries.GetList(ctx, listID); errors.Is(err, pgx.ErrNoRows) || (err == nil && list.DeletedAt.Valid) {
+		return ErrListNotFound
+	} else if err != nil {
+		return err
+	}
+	subscriber, _, err := memberSubscription(ctx, queries, listID, memberNumber)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	inserted, err := queries.InsertSubscription(ctx, db.InsertSubscriptionParams{
+		SubscriberID: subscriber.ID, ListID: listID, Status: "subscribed", Source: source, RuleID: ruleID,
+	})
+	if err != nil || inserted == 0 {
+		return err
+	}
+	return s.push(ctx, queries, subscriber.ID)
+}
+
+// RemoveAutomatic is one subscription_remove from the reconciliation: a
+// 'subscribed' rule or workplace row becomes 'removed'. Any other row (or
+// none) is left alone, as ApplyMember would.
+func (s Service) RemoveAutomatic(ctx context.Context, queries *db.Queries, memberNumber int32, listID pgtype.UUID) error {
+	subscriber, row, err := memberSubscription(ctx, queries, listID, memberNumber)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if row.Status != "subscribed" || (row.Source != SourceRule && row.Source != SourceWorkplace) {
+		return nil
+	}
+	if err := queries.SetSubscriptionStatus(ctx, db.SetSubscriptionStatusParams{SubscriberID: subscriber.ID, ListID: listID, Status: "removed"}); err != nil {
+		return err
+	}
+	return s.push(ctx, queries, subscriber.ID)
+}
+
 // memberSubscription loads the member and their row on the list. A missing
 // member is ErrNotFound; a missing row is pgx.ErrNoRows with the subscriber set.
 func memberSubscription(ctx context.Context, queries *db.Queries, listID pgtype.UUID, memberNumber int32) (db.Subscriber, db.Subscription, error) {
@@ -258,28 +302,47 @@ func ApplyMember(ctx context.Context, queries *db.Queries, subscriberID pgtype.U
 	return changed, unmatchedWorkplace, nil
 }
 
-// FullName is the name sent to the provider.
-func (m Member) FullName() string {
-	return strings.TrimSpace(m.FirstName + " " + m.LastName)
-}
-
 func setParams(id pgtype.UUID, member Member) db.SetMemberFieldsParams {
 	return db.SetMemberFieldsParams{
 		ID:           id,
 		Email:        member.Email,
-		Name:         member.FullName(),
+		Name:         member.Name,
 		MemberNumber: &member.MemberNumber,
-		FirstName:    &member.FirstName,
-		LastName:     &member.LastName,
 		City:         member.City,
 		Lang:         &member.Lang,
 	}
 }
 
-func sameFields(subscriber db.Subscriber, member Member) bool {
+// Normalize trims member's fields (an empty city becomes nil) and checks
+// them: a positive member_number, a plain email address, and name and lang
+// present.
+func Normalize(member Member) (Member, error) {
+	member.Email = strings.TrimSpace(member.Email)
+	member.Name = strings.TrimSpace(member.Name)
+	member.Lang = strings.TrimSpace(member.Lang)
+	if member.City != nil {
+		if city := strings.TrimSpace(*member.City); city != "" {
+			member.City = &city
+		} else {
+			member.City = nil
+		}
+	}
+	switch address, err := mail.ParseAddress(member.Email); {
+	case member.MemberNumber <= 0:
+		return member, errors.New("member_number must be a positive integer")
+	case err != nil || address.Address != member.Email:
+		return member, errors.New("email must be a plain email address")
+	case member.Name == "" || member.Lang == "":
+		return member, errors.New("name and lang are required")
+	}
+	return member, nil
+}
+
+// SameData reports whether the subscriber already stores member's data
+// (email, name, city, lang).
+func SameData(subscriber db.Subscriber, member Member) bool {
 	params := setParams(subscriber.ID, member)
 	return subscriber.Email == params.Email && subscriber.Name == params.Name &&
-		equal(subscriber.FirstName, params.FirstName) && equal(subscriber.LastName, params.LastName) &&
 		equal(subscriber.City, params.City) && equal(subscriber.Lang, params.Lang)
 }
 

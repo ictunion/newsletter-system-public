@@ -5,9 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"net/mail"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -20,11 +18,11 @@ import (
 
 // memberFieldsRequest is the body of PUT /members/{member_number}.
 type memberFieldsRequest struct {
-	Email     string  `json:"email"`
-	FirstName string  `json:"first_name"`
-	LastName  string  `json:"last_name"`
-	City      *string `json:"city"`
-	Lang      string  `json:"lang"`
+	Email string `json:"email"`
+	// Full name as the newsletter greets the member.
+	Name string  `json:"name"`
+	City *string `json:"city"`
+	Lang string  `json:"lang"`
 	// orca's workplaces.newsletter_id: the Listmonk ID of the workplace list.
 	WorkplaceNewsletterID *int32 `json:"workplace_newsletter_id"`
 }
@@ -40,8 +38,6 @@ type subscriberResponse struct {
 	Email                string             `json:"email"`
 	Name                 string             `json:"name"`
 	MemberNumber         *int32             `json:"member_number"`
-	FirstName            *string            `json:"first_name"`
-	LastName             *string            `json:"last_name"`
 	City                 *string            `json:"city"`
 	Lang                 *string            `json:"lang"`
 	ListmonkSubscriberID *int32             `json:"listmonk_subscriber_id"`
@@ -86,10 +82,6 @@ func CreateMember(pool *pgxpool.Pool, service members.Service) http.HandlerFunc 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body createMemberRequest
 		if !decodeJSON(w, r, &body) {
-			return
-		}
-		if body.MemberNumber <= 0 {
-			writeError(w, http.StatusBadRequest, "member_number must be a positive integer")
 			return
 		}
 		member, ok := validMember(w, body.MemberNumber, body.memberFieldsRequest)
@@ -281,7 +273,7 @@ func loadSubscriber(ctx context.Context, queries *db.Queries, subscriber db.Subs
 	}
 	response := subscriberResponse{
 		ID: subscriber.ID, Email: subscriber.Email, Name: subscriber.Name, MemberNumber: subscriber.MemberNumber,
-		FirstName: subscriber.FirstName, LastName: subscriber.LastName, City: subscriber.City, Lang: subscriber.Lang,
+		City: subscriber.City, Lang: subscriber.Lang,
 		ListmonkSubscriberID: subscriber.ListmonkSubscriberID, CreatedAt: subscriber.CreatedAt, UpdatedAt: subscriber.UpdatedAt,
 		Subscriptions: make([]subscriptionItem, 0, len(rows)),
 	}
@@ -300,24 +292,15 @@ func memberNumberParam(w http.ResponseWriter, r *http.Request) (int32, bool) {
 	return int32(n), true
 }
 
-// validMember trims and validates member data, answering 400 itself when
-// it's invalid.
+// validMember normalizes member data (members.Normalize), answering 400
+// itself when it's invalid.
 func validMember(w http.ResponseWriter, memberNumber int32, body memberFieldsRequest) (members.Member, bool) {
-	member := members.Member{
-		MemberNumber:          memberNumber,
-		Email:                 strings.TrimSpace(body.Email),
-		FirstName:             strings.TrimSpace(body.FirstName),
-		LastName:              strings.TrimSpace(body.LastName),
-		City:                  trimmedOrNil(body.City),
-		Lang:                  strings.TrimSpace(body.Lang),
-		WorkplaceNewsletterID: body.WorkplaceNewsletterID,
-	}
-	if address, err := mail.ParseAddress(member.Email); err != nil || address.Address != member.Email {
-		writeError(w, http.StatusBadRequest, "email must be a plain email address")
-		return member, false
-	}
-	if member.FirstName == "" || member.LastName == "" || member.Lang == "" {
-		writeError(w, http.StatusBadRequest, "first_name, last_name and lang are required")
+	member, err := members.Normalize(members.Member{
+		MemberNumber: memberNumber, Email: body.Email, Name: body.Name,
+		City: body.City, Lang: body.Lang, WorkplaceNewsletterID: body.WorkplaceNewsletterID,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return member, false
 	}
 	return member, true

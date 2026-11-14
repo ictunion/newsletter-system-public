@@ -18,8 +18,7 @@ import (
 type Member struct {
 	MemberNumber          int32   `json:"member_number"`
 	Email                 string  `json:"email"`
-	FirstName             string  `json:"first_name"`
-	LastName              string  `json:"last_name"`
+	Name                  string  `json:"name"`
 	City                  *string `json:"city"`
 	Lang                  string  `json:"lang"`
 	WorkplaceNewsletterID *int32  `json:"workplace_newsletter_id"`

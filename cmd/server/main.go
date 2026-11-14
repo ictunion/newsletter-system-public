@@ -19,6 +19,7 @@ import (
 	"github.com/kubik/newsletter-system/internal/keycloak"
 	"github.com/kubik/newsletter-system/internal/listmonk"
 	"github.com/kubik/newsletter-system/internal/members"
+	"github.com/kubik/newsletter-system/internal/orca"
 	"github.com/kubik/newsletter-system/internal/syncjob"
 	"github.com/kubik/newsletter-system/internal/worker"
 
@@ -89,6 +90,22 @@ func main() {
 		go syncjob.Every(requestContext, worker.PollInterval, worker.Worker{Pool: pool, Listmonk: listmonkClient}.RunDue)
 	} else {
 		log.Print("LISTMONK_HOST not set: Listmonk syncs and the provider worker disabled")
+	}
+
+	// The orca reconciliation is optional too (see config.OrcaAPIURL). Daily:
+	// orca calls this API directly on every change; this catches lost calls.
+	if appConfig.OrcaAPIURL != "" {
+		orcaClient := orca.New(appConfig.OrcaAPIURL, appConfig.OrcaSyncToken)
+		syncs[string(syncjob.KindOrcaMembers)] = func(ctx context.Context) error {
+			return syncjob.RunOrcaReconciliation(ctx, pool, orcaClient)
+		}
+		go syncjob.Every(requestContext, 24*time.Hour, func(ctx context.Context) {
+			if err := syncs[string(syncjob.KindOrcaMembers)](ctx); err != nil {
+				log.Printf("sync: %s: %v", syncjob.KindOrcaMembers, err)
+			}
+		})
+	} else {
+		log.Print("ORCA_API_URL not set: orca reconciliation disabled")
 	}
 
 	keycloakProvider, err := keycloak.NewProvider(appConfig.KeycloakHost, appConfig.KeycloakRealm, appConfig.KeycloakClientID)

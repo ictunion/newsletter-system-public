@@ -16,7 +16,7 @@ import (
 	"github.com/kubik/newsletter-system/internal/members"
 )
 
-const janBody = `{"member_number":834,"email":"jan@example.com","first_name":"Jan","last_name":"Novák","city":"Praha 4","lang":"cs","workplace_newsletter_id":null}`
+const janBody = `{"member_number":834,"email":"jan@example.com","name":"Jan Novák","city":"Praha 4","lang":"cs","workplace_newsletter_id":null}`
 
 // serve calls h with the path values set, returning status and the decoded memberResponse.
 func serve(t *testing.T, h http.HandlerFunc, method, body string, pathValues map[string]string) (int, memberResponse) {
@@ -125,7 +125,7 @@ func TestUpdateMember(t *testing.T) {
 	update := UpdateMember(pool, service)
 	path := map[string]string{"member_number": "834"}
 
-	code, updated := serve(t, update, http.MethodPut, `{"email":"jan@example.com","first_name":"Jan","last_name":"Dvořák","lang":"en","workplace_newsletter_id":13}`, path)
+	code, updated := serve(t, update, http.MethodPut, `{"email":"jan@example.com","name":"Jan Dvořák","lang":"en","workplace_newsletter_id":13}`, path)
 	if code != http.StatusOK || updated.Name != "Jan Dvořák" || updated.City != nil || *updated.Lang != "en" ||
 		len(updated.Subscriptions) != 1 || updated.Subscriptions[0].Source != "workplace" || updated.UnmatchedWorkplaceNewsletterID != nil {
 		t.Errorf("update: code = %d, response = %+v", code, updated)
@@ -135,8 +135,8 @@ func TestUpdateMember(t *testing.T) {
 		name, number, body string
 		want               int
 	}{
-		{"unknown member", "999", `{"email":"x@example.com","first_name":"X","last_name":"Y","lang":"cs"}`, http.StatusNotFound},
-		{"email of another member", "834", `{"email":"EVA@example.com","first_name":"Jan","last_name":"Novák","lang":"cs"}`, http.StatusConflict},
+		{"unknown member", "999", `{"email":"x@example.com","name":"X Y","lang":"cs"}`, http.StatusNotFound},
+		{"email of another member", "834", `{"email":"EVA@example.com","name":"Jan Novák","lang":"cs"}`, http.StatusConflict},
 		{"member_number in body", "834", janBody, http.StatusBadRequest},
 		{"bad member_number", "abc", `{}`, http.StatusBadRequest},
 	}

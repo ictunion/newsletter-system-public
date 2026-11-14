@@ -22,6 +22,7 @@ type Querier interface {
 	// Listmonk subscription import: someone added in the Listmonk UI.
 	CreateNonMember(ctx context.Context, arg CreateNonMemberParams) (Subscriber, error)
 	CreateRule(ctx context.Context, arg CreateRuleParams) (SubscriptionRule, error)
+	DecidePendingChange(ctx context.Context, arg DecidePendingChangeParams) (PendingChange, error)
 	// Deletes a successful job unless it was enqueued again while it ran
 	// (updated_at moved), in which case it stays pending and runs again.
 	DeleteFinishedJob(ctx context.Context, arg DeleteFinishedJobParams) (int64, error)
@@ -32,6 +33,10 @@ type Querier interface {
 	// the delete_subscriber job.
 	DeleteSubscriber(ctx context.Context, id pgtype.UUID) (*int32, error)
 	DeleteSubscriberByMemberNumber(ctx context.Context, memberNumber *int32) (*int32, error)
+	// orca reconciliation, in its transaction: pending member and subscription
+	// changes this run did not detect again (detected_at older than the
+	// transaction) are resolved; drop them so nobody approves a stale change.
+	DeleteUndetectedMemberChanges(ctx context.Context) (int64, error)
 	EnqueueDeleteSubscriber(ctx context.Context, listmonkSubscriberID *int32) error
 	// One push job per subscriber: the worker reads current state when it runs.
 	// A pending job is touched instead (due now, new updated_at), so a worker
@@ -70,12 +75,18 @@ type Querier interface {
 	ListListSubscribers(ctx context.Context, arg ListListSubscribersParams) ([]ListListSubscribersRow, error)
 	// Listmonk subscribers we deleted but Listmonk still has until the job runs.
 	ListListmonkIDsWithDeleteJobs(ctx context.Context) ([]int32, error)
+	// Every member's subscriptions, for the orca reconciliation.
+	ListMemberSubscriptions(ctx context.Context) ([]Subscription, error)
+	ListMembers(ctx context.Context) ([]Subscriber, error)
 	// Active Listmonk-linked lists that Listmonk no longer returned.
 	ListMissingListmonkLists(ctx context.Context, seenListmonkIds []int32) ([]ListMissingListmonkListsRow, error)
 	// GET /lists: every list with our subscription counts per status. Deleted
 	// lists only with include_deleted. id narrows it to one list (PUT /lists/{id}
 	// returns the updated list in the same shape).
 	ListNewsletterLists(ctx context.Context, arg ListNewsletterListsParams) ([]ListNewsletterListsRow, error)
+	// GET /changes: newest first, with the list name for list changes. Every
+	// filter is nullable.
+	ListPendingChanges(ctx context.Context, arg ListPendingChangesParams) ([]ListPendingChangesRow, error)
 	// GET /sync-runs: the latest runs of each kind, newest first.
 	ListRecentSyncRuns(ctx context.Context, perKind int32) ([]SyncRun, error)
 	ListRules(ctx context.Context) ([]SubscriptionRule, error)
@@ -83,10 +94,11 @@ type Querier interface {
 	ListSubscriberIDsWithPushJobs(ctx context.Context) ([]pgtype.UUID, error)
 	// A subscriber's subscriptions with their list, for responses and applyMember.
 	ListSubscriptions(ctx context.Context, subscriberID pgtype.UUID) ([]ListSubscriptionsRow, error)
-	// Raises a change, or refreshes the payload of the same pending change
-	// (kind, member_number, list_id). Not raised when an admin already rejected
-	// the same change with an identical payload. Returns 1 when the change is
-	// now pending, 0 when it was suppressed.
+	LockPendingChange(ctx context.Context, id pgtype.UUID) (PendingChange, error)
+	// Raises a change, or refreshes the payload and detected_at of the same
+	// pending change (kind, member_number, list_id). Not raised when an admin
+	// already rejected the same change with an identical payload. Returns 1
+	// when the change is now pending, 0 when it was suppressed.
 	RaisePendingChange(ctx context.Context, arg RaisePendingChangeParams) (int64, error)
 	// Dead job back to pending, due now, with a fresh attempt count.
 	RetryJob(ctx context.Context, id pgtype.UUID) (ProviderJob, error)
@@ -94,6 +106,7 @@ type Querier interface {
 	// Updates a member's data, or turns a non-member subscriber into a member.
 	SetMemberFields(ctx context.Context, arg SetMemberFieldsParams) (Subscriber, error)
 	SetSubscriptionStatus(ctx context.Context, arg SetSubscriptionStatusParams) error
+	SoftDeleteList(ctx context.Context, id pgtype.UUID) error
 	// Fails with a unique violation (sync_runs_running_idx) while another run
 	// of the same kind is still running.
 	StartSyncRun(ctx context.Context, kind string) (pgtype.UUID, error)

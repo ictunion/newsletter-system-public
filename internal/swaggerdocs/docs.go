@@ -105,6 +105,321 @@ const docTemplate = `{
                 }
             }
         },
+        "/changes": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires the view-newsletters role. Drift found by the orca reconciliation and the Listmonk list sync, newest first. Pending ones wait for an admin to approve or reject them.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "changes"
+                ],
+                "summary": "List pending changes",
+                "parameters": [
+                    {
+                        "enum": [
+                            "pending",
+                            "approved",
+                            "rejected"
+                        ],
+                        "type": "string",
+                        "description": "Only this status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "member_new",
+                            "member_updated",
+                            "member_removed",
+                            "subscription_add",
+                            "subscription_remove",
+                            "list_removed"
+                        ],
+                        "type": "string",
+                        "description": "Only this kind",
+                        "name": "kind",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results, default 100, capped at 1000",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Default 0",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.changesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/changes/approve": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires the manage-newsletters role. Approves each change on its own, as POST /changes/{id}/approve does; one failing does not stop the others. Answers 200 with what was approved and what failed, and why. At most 1000 IDs.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "changes"
+                ],
+                "summary": "Approve several pending changes",
+                "parameters": [
+                    {
+                        "description": "Change IDs",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.bulkApproveRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.bulkApproveResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/changes/{id}/approve": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires the manage-newsletters role. Applies the change (member_new adds the member, member_updated updates them, member_removed deletes them, subscription_add/remove change that one subscription, list_removed soft-deletes the list) and returns it. 409 when it is already decided, or when it can't be applied any more (the error says why); it then stays pending.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "changes"
+                ],
+                "summary": "Approve a pending change",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Change ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.changeItem"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/changes/{id}/reject": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires the manage-newsletters role. Changes nothing else; the same change with an identical payload is not raised again. Returns the change. 409 when it is already decided.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "changes"
+                ],
+                "summary": "Reject a pending change",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Change ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.changeItem"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/jobs": {
             "get": {
                 "security": [
@@ -1376,7 +1691,8 @@ const docTemplate = `{
                     {
                         "enum": [
                             "listmonk_lists",
-                            "listmonk_subscriptions"
+                            "listmonk_subscriptions",
+                            "orca_members"
                         ],
                         "type": "string",
                         "description": "Sync kind",
@@ -1486,6 +1802,120 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.bulkApproveFailed": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "handler.bulkApproveRequest": {
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "handler.bulkApproveResponse": {
+            "type": "object",
+            "properties": {
+                "approved": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.changeItem"
+                    }
+                },
+                "failed": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.bulkApproveFailed"
+                    }
+                }
+            }
+        },
+        "handler.changeItem": {
+            "type": "object",
+            "properties": {
+                "decided_at": {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "decided_by": {
+                    "description": "Keycloak subject of the deciding admin.",
+                    "type": "string"
+                },
+                "detected_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "member_new",
+                        "member_updated",
+                        "member_removed",
+                        "subscription_add",
+                        "subscription_remove",
+                        "list_removed"
+                    ]
+                },
+                "list_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "list_name": {
+                    "description": "Set for list changes and subscription changes.",
+                    "type": "string"
+                },
+                "member_number": {
+                    "type": "integer"
+                },
+                "payload": {
+                    "description": "member_new, member_updated: orca's member. member_removed: {email, name}.\nsubscription_add: {source, rule_id}. subscription_remove: {source}.\nlist_removed: {listmonk_id, name}.",
+                    "type": "object"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "approved",
+                        "rejected"
+                    ]
+                }
+            }
+        },
+        "handler.changesResponse": {
+            "type": "object",
+            "properties": {
+                "changes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.changeItem"
+                    }
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "handler.createMemberRequest": {
             "type": "object",
             "properties": {
@@ -1495,17 +1925,15 @@ const docTemplate = `{
                 "email": {
                     "type": "string"
                 },
-                "first_name": {
-                    "type": "string"
-                },
                 "lang": {
-                    "type": "string"
-                },
-                "last_name": {
                     "type": "string"
                 },
                 "member_number": {
                     "type": "integer"
+                },
+                "name": {
+                    "description": "Full name as the newsletter greets the member.",
+                    "type": "string"
                 },
                 "workplace_newsletter_id": {
                     "description": "orca's workplaces.newsletter_id: the Listmonk ID of the workplace list.",
@@ -1714,13 +2142,11 @@ const docTemplate = `{
                 "email": {
                     "type": "string"
                 },
-                "first_name": {
-                    "type": "string"
-                },
                 "lang": {
                     "type": "string"
                 },
-                "last_name": {
+                "name": {
+                    "description": "Full name as the newsletter greets the member.",
                     "type": "string"
                 },
                 "workplace_newsletter_id": {
@@ -1741,17 +2167,11 @@ const docTemplate = `{
                 "email": {
                     "type": "string"
                 },
-                "first_name": {
-                    "type": "string"
-                },
                 "id": {
                     "type": "string",
                     "format": "uuid"
                 },
                 "lang": {
-                    "type": "string"
-                },
-                "last_name": {
                     "type": "string"
                 },
                 "listmonk_subscriber_id": {
@@ -1860,17 +2280,11 @@ const docTemplate = `{
                 "email": {
                     "type": "string"
                 },
-                "first_name": {
-                    "type": "string"
-                },
                 "id": {
                     "type": "string",
                     "format": "uuid"
                 },
                 "lang": {
-                    "type": "string"
-                },
-                "last_name": {
                     "type": "string"
                 },
                 "listmonk_subscriber_id": {

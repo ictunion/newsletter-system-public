@@ -87,10 +87,10 @@ WHERE change.kind = 'list_removed'
   AND list.listmonk_id = ANY (sqlc.arg(seen_listmonk_ids)::int[]);
 
 -- name: RaisePendingChange :execrows
--- Raises a change, or refreshes the payload of the same pending change
--- (kind, member_number, list_id). Not raised when an admin already rejected
--- the same change with an identical payload. Returns 1 when the change is
--- now pending, 0 when it was suppressed.
+-- Raises a change, or refreshes the payload and detected_at of the same
+-- pending change (kind, member_number, list_id). Not raised when an admin
+-- already rejected the same change with an identical payload. Returns 1
+-- when the change is now pending, 0 when it was suppressed.
 INSERT INTO pending_changes (kind, member_number, list_id, payload)
 SELECT sqlc.arg(kind)::text, sqlc.narg(member_number)::int, sqlc.narg(list_id)::uuid, sqlc.arg(payload)::jsonb
 WHERE NOT EXISTS (
@@ -102,7 +102,7 @@ WHERE NOT EXISTS (
       AND rejected.payload = sqlc.arg(payload)::jsonb
 )
 ON CONFLICT (kind, member_number, list_id) WHERE status = 'pending'
-DO UPDATE SET payload = EXCLUDED.payload;
+DO UPDATE SET payload = EXCLUDED.payload, detected_at = now();
 
 -- name: ListNewsletterLists :many
 -- GET /lists: every list with our subscription counts per status. Deleted
@@ -179,8 +179,8 @@ SELECT * FROM subscribers WHERE member_number = sqlc.arg(member_number);
 SELECT * FROM subscribers WHERE lower(email) = lower(sqlc.arg(email));
 
 -- name: CreateMember :one
-INSERT INTO subscribers (email, name, member_number, first_name, last_name, city, lang)
-VALUES (sqlc.arg(email), sqlc.arg(name), sqlc.arg(member_number), sqlc.arg(first_name), sqlc.arg(last_name), sqlc.narg(city), sqlc.arg(lang))
+INSERT INTO subscribers (email, name, member_number, city, lang)
+VALUES (sqlc.arg(email), sqlc.arg(name), sqlc.arg(member_number), sqlc.narg(city), sqlc.arg(lang))
 RETURNING *;
 
 -- name: SetMemberFields :one
@@ -189,8 +189,6 @@ UPDATE subscribers
 SET email = sqlc.arg(email),
     name = sqlc.arg(name),
     member_number = sqlc.arg(member_number),
-    first_name = sqlc.arg(first_name),
-    last_name = sqlc.arg(last_name),
     city = sqlc.narg(city),
     lang = sqlc.arg(lang),
     updated_at = now()
@@ -372,3 +370,48 @@ JOIN subscribers AS subscriber ON subscriber.id = subscription.subscriber_id
 WHERE subscription.list_id = sqlc.arg(list_id)
   AND subscription.status = 'subscribed'
   AND subscriber.listmonk_subscriber_id IS NOT NULL;
+
+-- name: DeleteUndetectedMemberChanges :execrows
+-- orca reconciliation, in its transaction: pending member and subscription
+-- changes this run did not detect again (detected_at older than the
+-- transaction) are resolved; drop them so nobody approves a stale change.
+DELETE FROM pending_changes
+WHERE status = 'pending'
+  AND kind IN ('member_new', 'member_updated', 'member_removed', 'subscription_add', 'subscription_remove')
+  AND detected_at < now();
+
+-- name: ListMembers :many
+SELECT * FROM subscribers WHERE member_number IS NOT NULL ORDER BY member_number;
+
+-- name: ListMemberSubscriptions :many
+-- Every member's subscriptions, for the orca reconciliation.
+SELECT subscription.*
+FROM subscriptions AS subscription
+JOIN subscribers AS subscriber ON subscriber.id = subscription.subscriber_id
+WHERE subscriber.member_number IS NOT NULL;
+
+-- name: ListPendingChanges :many
+-- GET /changes: newest first, with the list name for list changes. Every
+-- filter is nullable.
+SELECT
+    change.*,
+    list.name AS list_name,
+    count(*) OVER () AS total_count
+FROM pending_changes AS change
+LEFT JOIN newsletter_lists AS list ON list.id = change.list_id
+WHERE (sqlc.narg(status)::text IS NULL OR change.status = sqlc.narg(status)::text)
+  AND (sqlc.narg(kind)::text IS NULL OR change.kind = sqlc.narg(kind)::text)
+ORDER BY change.detected_at DESC, change.id
+LIMIT sqlc.arg(lim)::int OFFSET sqlc.arg(off)::int;
+
+-- name: LockPendingChange :one
+SELECT * FROM pending_changes WHERE id = sqlc.arg(id) FOR UPDATE;
+
+-- name: DecidePendingChange :one
+UPDATE pending_changes
+SET status = sqlc.arg(status), decided_at = now(), decided_by = sqlc.arg(decided_by)
+WHERE id = sqlc.arg(id)
+RETURNING *;
+
+-- name: SoftDeleteList :exec
+UPDATE newsletter_lists SET deleted_at = now(), updated_at = now() WHERE id = sqlc.arg(id) AND deleted_at IS NULL;

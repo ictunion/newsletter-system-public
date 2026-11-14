@@ -2,26 +2,22 @@
 -- +goose StatementBegin
 -- subscribers is anyone who receives a newsletter. A member is a subscriber
 -- with a member_number; non-members (e.g. event invitees added in the
--- Listmonk UI) have none and carry no member-only fields. name is what goes
--- to the provider: for members, first_name || ' ' || last_name, computed on
--- write. The member's workplace is not stored here: it is input only, and
+-- Listmonk UI) have none and carry no member-only fields (city, lang). name
+-- is what goes to the provider, as orca sends it. The member's workplace is not stored here: it is input only, and
 -- the source = 'workplace' subscription row records it.
 CREATE TABLE subscribers (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email                    TEXT NOT NULL,
     name                     TEXT NOT NULL,
     member_number            INTEGER UNIQUE,
-    first_name               TEXT,
-    last_name                TEXT,
     city                     TEXT,
     lang                     TEXT,
     listmonk_subscriber_id   INTEGER UNIQUE,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT subscribers_member_fields_check CHECK (
-        (member_number IS NOT NULL AND first_name IS NOT NULL AND last_name IS NOT NULL AND lang IS NOT NULL)
-        OR (member_number IS NULL AND first_name IS NULL AND last_name IS NULL AND city IS NULL
-            AND lang IS NULL)
+        (member_number IS NOT NULL AND lang IS NOT NULL)
+        OR (member_number IS NULL AND city IS NULL AND lang IS NULL)
     )
 );
 

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/kubik/newsletter-system/internal/dbtest"
 	"github.com/kubik/newsletter-system/internal/handler"
 	"github.com/kubik/newsletter-system/internal/keycloak"
@@ -29,7 +31,10 @@ func TestRouteRoles(t *testing.T) {
 		for i, role := range roles {
 			names[i] = string(role)
 		}
-		return provider.SignToken(t, keycloak.Claims{ResourceAccess: map[string]keycloak.RolesClaim{keycloaktest.ClientID: {Roles: names}}})
+		return provider.SignToken(t, keycloak.Claims{
+			RegisteredClaims: jwt.RegisteredClaims{Subject: "test-admin"},
+			ResourceAccess:   map[string]keycloak.RolesClaim{keycloaktest.ClientID: {Roles: names}},
+		})
 	}
 
 	const someID = "00000000-0000-0000-0000-000000000000"
@@ -54,6 +59,10 @@ func TestRouteRoles(t *testing.T) {
 		{http.MethodPost, "/rules", []keycloak.Role{manage}},
 		{http.MethodPut, "/rules/" + someID, []keycloak.Role{manage}},
 		{http.MethodDelete, "/rules/" + someID, []keycloak.Role{manage}},
+		{http.MethodGet, "/changes", []keycloak.Role{view}},
+		{http.MethodPost, "/changes/" + someID + "/approve", []keycloak.Role{manage}},
+		{http.MethodPost, "/changes/" + someID + "/reject", []keycloak.Role{manage}},
+		{http.MethodPost, "/changes/approve", []keycloak.Role{manage}},
 		{http.MethodGet, "/jobs", []keycloak.Role{view}},
 		{http.MethodPost, "/jobs/" + someID + "/retry", []keycloak.Role{manage}},
 		{http.MethodGet, "/sync-runs", []keycloak.Role{view}},

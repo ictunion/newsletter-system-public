@@ -35,7 +35,7 @@ func TestRunListmonkSubscriptionImport(t *testing.T) {
 	// to a Listmonk subscriber with memberships unless listmonk is nil.
 	member := func(number int32, email string, ours map[int32]string, listmonkStatus string, listmonkLists map[int]string) pgtype.UUID {
 		t.Helper()
-		result, err := members.Service{}.Create(ctx, queries, members.Member{MemberNumber: number, Email: email, FirstName: "A", LastName: "B", Lang: "cs"})
+		result, err := members.Service{}.Create(ctx, queries, members.Member{MemberNumber: number, Email: email, Name: "A B", Lang: "cs"})
 		if err != nil {
 			t.Fatal(err)
 		}

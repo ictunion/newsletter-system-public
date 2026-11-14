@@ -117,16 +117,16 @@ For every task that adds routes:
 **Done when:** tests cover a Listmonk UI add becoming `manual`, a non-member being created, an opt-out becoming `unsubscribed`, re-add and removal, the skip on pending jobs, and blocklisted subscribers.
 
 ## 12. orca client and reconciliation (flow 8)
-- [ ] `internal/orca` client for `GET /sync/newsletter/members`, using the `ORCA_SYNC_TOKEN` bearer token.
-- [ ] `RunOrcaReconciliation`: raise `member_new`, `member_updated`, `member_removed`, `subscription_add` and `subscription_remove`. Re-detection updates the payload. A rejected change with an identical payload is not raised again.
-- [ ] Daily schedule, only when orca is configured. Add `orca_members` to `POST /sync-runs/{kind}`.
+- [x] `internal/orca` client for `GET /sync/newsletter/members`, using the `ORCA_SYNC_TOKEN` bearer token.
+- [x] `RunOrcaReconciliation`: raise `member_new`, `member_updated`, `member_removed`, `subscription_add` and `subscription_remove`. Re-detection updates the payload. A rejected change with an identical payload is not raised again.
+- [x] Daily schedule, only when orca is configured. Add `orca_members` to `POST /sync-runs/{kind}`.
 
 **Done when:** tests against a fake orca cover every change kind and the rejected-payload suppression.
 
 ## 13. Pending changes API
-- [ ] `GET /changes?status=`.
-- [ ] `POST /changes/{id}/approve`, `POST /changes/{id}/reject`, and the bulk `POST /changes/approve`.
-- [ ] Approving applies the change through the same code as flows 1–3 and `applyMember`. Approving `list_removed` sets `deleted_at`. `decided_by` is set from the token.
+- [x] `GET /changes?status=`.
+- [x] `POST /changes/{id}/approve`, `POST /changes/{id}/reject`, and the bulk `POST /changes/approve`.
+- [x] Approving applies the change through the same code as flows 1–3 and `applyMember`. Approving `list_removed` sets `deleted_at`. `decided_by` is set from the token.
 
 **Done when:** tests cover approving each kind, reject, and bulk approve.
 

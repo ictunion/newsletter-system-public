@@ -24,6 +24,7 @@ const (
 	AuditCategoryRules   AuditCategory = "rules"
 	AuditCategoryMembers AuditCategory = "members"
 	AuditCategoryJobs    AuditCategory = "jobs"
+	AuditCategoryChanges AuditCategory = "changes"
 )
 
 // AuditCategories lists every category, used to validate the category filter.
@@ -34,6 +35,7 @@ var AuditCategories = []AuditCategory{
 	AuditCategoryRules,
 	AuditCategoryMembers,
 	AuditCategoryJobs,
+	AuditCategoryChanges,
 }
 
 type auditAction struct {
@@ -60,6 +62,10 @@ var auditRoutes = map[string]auditAction{
 	"DELETE /subscribers/{id}":        {AuditCategoryMembers, "delete_subscriber"},
 
 	"POST /jobs/{id}/retry": {AuditCategoryJobs, "retry_job"},
+
+	"POST /changes/{id}/approve": {AuditCategoryChanges, "approve_change"},
+	"POST /changes/{id}/reject":  {AuditCategoryChanges, "reject_change"},
+	"POST /changes/approve":      {AuditCategoryChanges, "approve_changes"},
 }
 
 // auditRecord is placed on the request context by AuditLog and filled in by
