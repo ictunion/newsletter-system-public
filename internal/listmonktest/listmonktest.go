@@ -1,6 +1,6 @@
 // Package listmonktest runs a fake Listmonk API with in-memory state, for
 // tests of code that drives internal/listmonk. It mimics the Listmonk v6.2
-// behavior recorded in docs/newsletter_service_plan.md ("Listmonk details"),
+// behavior recorded in docs/architecture.md ("Listmonk behavior we rely on"),
 // the same way internal/keycloaktest fakes Keycloak.
 package listmonktest
 

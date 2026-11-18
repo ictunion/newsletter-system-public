@@ -157,6 +157,9 @@ func TestListChanges(t *testing.T) {
 	listID := insertList(t, pool, "Praha", 1, false)
 	n := int32(834)
 	raise(t, pool, "member_new", &n, "", `{"member_number":834}`)
+	mustExec(t, pool, `INSERT INTO subscribers (email, name, member_number, lang) VALUES ('j@x.cz', 'Jan', 835, 'cs')`)
+	m := int32(835)
+	raise(t, pool, "member_updated", &m, "", `{"member_number":835}`)
 	raise(t, pool, "list_removed", nil, listID, `{"listmonk_id":1,"name":"Praha"}`)
 	mustExec(t, pool, `INSERT INTO pending_changes (kind, member_number, payload, status, decided_at, decided_by) VALUES ('member_removed', 1, '{}', 'rejected', now(), 'x')`)
 
@@ -167,11 +170,15 @@ func TestListChanges(t *testing.T) {
 		_ = json.Unmarshal(recorder.Body.Bytes(), &response)
 		return recorder.Code, response
 	}
-	if _, all := get(""); all.Total != 3 {
-		t.Errorf("all = %d, want 3", all.Total)
+	if _, all := get(""); all.Total != 4 {
+		t.Errorf("all = %d, want 4", all.Total)
 	}
-	if _, pending := get("?status=pending"); pending.Total != 2 {
-		t.Errorf("pending = %d, want 2", pending.Total)
+	if _, pending := get("?status=pending"); pending.Total != 3 {
+		t.Errorf("pending = %d, want 3", pending.Total)
+	}
+	_, updated := get("?kind=member_updated")
+	if updated.Total != 1 || updated.Changes[0].MemberName == nil || *updated.Changes[0].MemberName != "Jan" {
+		t.Errorf("member_updated = %+v", updated.Changes)
 	}
 	_, lists := get("?status=pending&kind=list_removed")
 	if lists.Total != 1 || *lists.Changes[0].ListName != "Praha" || string(lists.Changes[0].Payload) != `{"name":"Praha","listmonk_id":1}` {

@@ -55,13 +55,15 @@ SET status = 'failed', finished_at = now(), error = 'interrupted: server restart
 WHERE status = 'running';
 
 -- name: UpsertListmonkList :exec
--- Listmonk list sync. New lists get the default 'private' visibility; an
--- existing list keeps its visibility and gets deleted_at cleared if it had
--- been soft-deleted and reappeared.
-INSERT INTO newsletter_lists (name, description, listmonk_id, listmonk_subscriber_count, synced_at)
-VALUES (sqlc.arg(name), sqlc.arg(description), sqlc.arg(listmonk_id)::int, sqlc.arg(listmonk_subscriber_count)::int, now())
+-- Listmonk list sync. A list that is public in Listmonk becomes 'public' here
+-- on every sync; otherwise new lists get 'private' and existing ones keep
+-- their visibility. A list that reappears gets deleted_at cleared.
+INSERT INTO newsletter_lists (name, description, listmonk_id, listmonk_subscriber_count, visibility, synced_at)
+VALUES (sqlc.arg(name), sqlc.arg(description), sqlc.arg(listmonk_id)::int, sqlc.arg(listmonk_subscriber_count)::int,
+        CASE WHEN sqlc.arg(listmonk_public)::bool THEN 'public' ELSE 'private' END, now())
 ON CONFLICT (listmonk_id) DO UPDATE
 SET name = EXCLUDED.name,
+    visibility = CASE WHEN sqlc.arg(listmonk_public)::bool THEN 'public' ELSE newsletter_lists.visibility END,
     description = EXCLUDED.description,
     listmonk_subscriber_count = EXCLUDED.listmonk_subscriber_count,
     synced_at = now(),
@@ -401,14 +403,16 @@ JOIN subscribers AS subscriber ON subscriber.id = subscription.subscriber_id
 WHERE subscriber.member_number IS NOT NULL;
 
 -- name: ListPendingChanges :many
--- GET /changes: newest first, with the list name for list changes. Every
--- filter is nullable.
+-- GET /changes: newest first, with the list name for list changes and our
+-- subscriber's name for members we have. Every filter is nullable.
 SELECT
     change.*,
     list.name AS list_name,
+    subscriber.name AS member_name,
     count(*) OVER () AS total_count
 FROM pending_changes AS change
 LEFT JOIN newsletter_lists AS list ON list.id = change.list_id
+LEFT JOIN subscribers AS subscriber ON subscriber.member_number = change.member_number
 WHERE (sqlc.narg(status)::text IS NULL OR change.status = sqlc.narg(status)::text)
   AND (sqlc.narg(kind)::text IS NULL OR change.kind = sqlc.narg(kind)::text)
 ORDER BY change.detected_at DESC, change.id

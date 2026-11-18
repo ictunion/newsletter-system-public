@@ -1879,6 +1879,10 @@ const docTemplate = `{
                     "description": "Set for list changes and subscription changes.",
                     "type": "string"
                 },
+                "member_name": {
+                    "description": "Our subscriber's name, when we have this member (not for member_new).",
+                    "type": "string"
+                },
                 "member_number": {
                     "type": "integer"
                 },

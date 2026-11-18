@@ -1,6 +1,6 @@
 // Package worker runs provider_jobs: it makes Listmonk match our DB for a
 // subscriber (push_subscriber) or deletes a subscriber there
-// (delete_subscriber). See docs/newsletter_service_plan.md, flow 5.
+// (delete_subscriber). See docs/architecture.md, "Provider worker".
 package worker
 
 import (

@@ -72,8 +72,8 @@ func record(ctx context.Context, pool *pgxpool.Pool, kind Kind, sync func(contex
 }
 
 // RunListmonkListSync copies Listmonk's lists into newsletter_lists
-// (upsert by listmonk_id; new lists are 'private', a reappearing list gets
-// deleted_at cleared) and raises a list_removed pending change for each
+// (upsert by listmonk_id; a Listmonk public list becomes 'public', other new
+// lists are 'private', a reappearing list gets deleted_at cleared) and raises a list_removed pending change for each
 // active list Listmonk no longer returns.
 func RunListmonkListSync(ctx context.Context, pool *pgxpool.Pool, client *listmonk.Client) error {
 	return record(ctx, pool, KindListmonkLists, func(ctx context.Context) (int, int, error) {
@@ -92,6 +92,7 @@ func RunListmonkListSync(ctx context.Context, pool *pgxpool.Pool, client *listmo
 					Description:             list.Description,
 					ListmonkID:              int32(list.ID),
 					ListmonkSubscriberCount: int32(list.SubscriberCount),
+					ListmonkPublic:          list.Type == "public",
 				}); err != nil {
 					return fmt.Errorf("upserting listmonk list %d: %w", list.ID, err)
 				}

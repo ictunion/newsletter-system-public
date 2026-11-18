@@ -1,7 +1,7 @@
 // Package listmonk is a thin client for the parts of the Listmonk API
 // (https://listmonk.app/docs/apis/) the worker and the Listmonk syncs use.
 // Behavior noted here was checked against Listmonk v6.2 (see
-// docs/newsletter_service_plan.md, "Listmonk details to verify").
+// docs/architecture.md, "Listmonk behavior we rely on").
 package listmonk
 
 import (
@@ -58,6 +58,7 @@ type List struct {
 	Name            string `json:"name"`
 	Description     string `json:"description"`
 	SubscriberCount int    `json:"subscriber_count"`
+	Type            string `json:"type"` // public or private
 }
 
 type Subscriber struct {

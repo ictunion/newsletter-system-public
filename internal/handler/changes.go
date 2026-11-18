@@ -42,6 +42,8 @@ type changeItem struct {
 	ListID       pgtype.UUID `json:"list_id" swaggertype:"string" format:"uuid"`
 	// Set for list changes and subscription changes.
 	ListName *string `json:"list_name,omitempty"`
+	// Our subscriber's name, when we have this member (not for member_new).
+	MemberName *string `json:"member_name,omitempty"`
 	// member_new, member_updated: orca's member. member_removed: {email, name}.
 	// subscription_add: {source, rule_id}. subscription_remove: {source}.
 	// list_removed: {listmonk_id, name}.
@@ -108,6 +110,7 @@ func ListChanges(queries *db.Queries) http.HandlerFunc {
 				Status: row.Status, DetectedAt: row.DetectedAt, DecidedAt: row.DecidedAt, DecidedBy: row.DecidedBy,
 			})
 			item.ListName = row.ListName
+			item.MemberName = row.MemberName
 			response.Changes = append(response.Changes, item)
 		}
 		writeJSON(w, http.StatusOK, response)

@@ -54,7 +54,7 @@ func TestListLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []List{{ID: 2, Name: "Praha", Description: "Pražská pobočka", SubscriberCount: 5}}; !reflect.DeepEqual(lists, want) {
+	if want := []List{{ID: 2, Name: "Praha", Description: "Pražská pobočka", SubscriberCount: 5, Type: "public"}}; !reflect.DeepEqual(lists, want) {
 		t.Errorf("lists = %+v, want %+v", lists, want)
 	}
 	request := only(t, requests)

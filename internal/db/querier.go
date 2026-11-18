@@ -89,8 +89,8 @@ type Querier interface {
 	// lists only with include_deleted. id narrows it to one list (PUT /lists/{id}
 	// returns the updated list in the same shape).
 	ListNewsletterLists(ctx context.Context, arg ListNewsletterListsParams) ([]ListNewsletterListsRow, error)
-	// GET /changes: newest first, with the list name for list changes. Every
-	// filter is nullable.
+	// GET /changes: newest first, with the list name for list changes and our
+	// subscriber's name for members we have. Every filter is nullable.
 	ListPendingChanges(ctx context.Context, arg ListPendingChangesParams) ([]ListPendingChangesRow, error)
 	// GET /sync-runs: the latest runs of each kind, newest first.
 	ListRecentSyncRuns(ctx context.Context, perKind int32) ([]SyncRun, error)
@@ -122,9 +122,9 @@ type Querier interface {
 	SyncRunIsRunning(ctx context.Context, kind string) (bool, error)
 	UpdateListVisibility(ctx context.Context, arg UpdateListVisibilityParams) (int64, error)
 	UpdateRule(ctx context.Context, arg UpdateRuleParams) (SubscriptionRule, error)
-	// Listmonk list sync. New lists get the default 'private' visibility; an
-	// existing list keeps its visibility and gets deleted_at cleared if it had
-	// been soft-deleted and reappeared.
+	// Listmonk list sync. A list that is public in Listmonk becomes 'public' here
+	// on every sync; otherwise new lists get 'private' and existing ones keep
+	// their visibility. A list that reappears gets deleted_at cleared.
 	UpsertListmonkList(ctx context.Context, arg UpsertListmonkListParams) error
 }
 
