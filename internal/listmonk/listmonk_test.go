@@ -58,7 +58,7 @@ func TestListLists(t *testing.T) {
 		t.Errorf("lists = %+v, want %+v", lists, want)
 	}
 	request := only(t, requests)
-	if request.path != "/api/lists" || request.query["per_page"][0] != "all" {
+	if request.path != "/api/lists" || request.query["per_page"][0] != "all" || request.query["status"][0] != "active" {
 		t.Errorf("request = %+v", request)
 	}
 }
