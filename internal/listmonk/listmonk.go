@@ -141,11 +141,13 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	return nil
 }
 
+// ListLists returns the active lists. Archived lists are left out, so the
+// list sync treats them like deleted ones (a list_removed pending change).
 func (c *Client) ListLists(ctx context.Context) ([]List, error) {
 	var page struct {
 		Results []List `json:"results"`
 	}
-	err := c.do(ctx, http.MethodGet, "/lists", url.Values{"per_page": {"all"}}, nil, &page)
+	err := c.do(ctx, http.MethodGet, "/lists", url.Values{"per_page": {"all"}, "status": {"active"}}, nil, &page)
 	return page.Results, err
 }
 
