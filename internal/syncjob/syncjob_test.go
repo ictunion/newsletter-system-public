@@ -88,15 +88,19 @@ func TestRunListmonkListSync(t *testing.T) {
 	status := 200
 	body := `{"data":{"results":[
 		{"id":1,"name":"Praha","description":"Pražská pobočka","subscriber_count":5},
-		{"id":2,"name":"Brno","description":"","subscriber_count":3}]}}`
+		{"id":2,"name":"Brno","description":"","subscriber_count":3,"type":"public"}]}}`
 	client := fakeLists(t, &body, &status)
 
-	// New lists are created as private, with Listmonk's fields copied.
+	// New lists are created as private (public if public in Listmonk), with
+	// Listmonk's fields copied.
 	if err := RunListmonkListSync(ctx, pool, client); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := listByListmonkID(t, pool, 1), (listRow{"Praha", "Pražská pobočka", "private", 5, false}); got != want {
 		t.Errorf("list 1 = %+v, want %+v", got, want)
+	}
+	if got := listByListmonkID(t, pool, 2).visibility; got != "public" {
+		t.Errorf("list 2 visibility = %q, want public", got)
 	}
 	if run := lastRun(t, pool); run.status != "succeeded" || run.fetched != 2 || run.changes != 0 {
 		t.Errorf("run = %+v", run)
@@ -134,6 +138,15 @@ func TestRunListmonkListSync(t *testing.T) {
 	}
 	if run := lastRun(t, pool); run.changes != 0 {
 		t.Errorf("run = %+v", run)
+	}
+
+	// A list made public in Listmonk becomes public here, overriding ours.
+	body = `{"data":{"results":[{"id":1,"name":"Praha 2","description":"d","subscriber_count":6,"type":"public"}]}}`
+	if err := RunListmonkListSync(ctx, pool, client); err != nil {
+		t.Fatal(err)
+	}
+	if got := listByListmonkID(t, pool, 1).visibility; got != "public" {
+		t.Errorf("list 1 visibility = %q, want public", got)
 	}
 }
 

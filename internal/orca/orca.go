@@ -1,5 +1,5 @@
 // Package orca is a client for orca's newsletter sync endpoint, used by the
-// daily reconciliation (docs/newsletter_service_plan.md, flow 8).
+// daily reconciliation (docs/architecture.md, "orca reconciliation").
 package orca
 
 import (

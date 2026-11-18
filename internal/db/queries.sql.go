@@ -1158,9 +1158,11 @@ const listPendingChanges = `-- name: ListPendingChanges :many
 SELECT
     change.id, change.kind, change.member_number, change.list_id, change.payload, change.status, change.detected_at, change.decided_at, change.decided_by,
     list.name AS list_name,
+    subscriber.name AS member_name,
     count(*) OVER () AS total_count
 FROM pending_changes AS change
 LEFT JOIN newsletter_lists AS list ON list.id = change.list_id
+LEFT JOIN subscribers AS subscriber ON subscriber.member_number = change.member_number
 WHERE ($1::text IS NULL OR change.status = $1::text)
   AND ($2::text IS NULL OR change.kind = $2::text)
 ORDER BY change.detected_at DESC, change.id
@@ -1185,11 +1187,12 @@ type ListPendingChangesRow struct {
 	DecidedAt    pgtype.Timestamptz `json:"decided_at"`
 	DecidedBy    *string            `json:"decided_by"`
 	ListName     *string            `json:"list_name"`
+	MemberName   *string            `json:"member_name"`
 	TotalCount   int64              `json:"total_count"`
 }
 
-// GET /changes: newest first, with the list name for list changes. Every
-// filter is nullable.
+// GET /changes: newest first, with the list name for list changes and our
+// subscriber's name for members we have. Every filter is nullable.
 func (q *Queries) ListPendingChanges(ctx context.Context, arg ListPendingChangesParams) ([]ListPendingChangesRow, error) {
 	rows, err := q.db.Query(ctx, listPendingChanges,
 		arg.Status,
@@ -1215,6 +1218,7 @@ func (q *Queries) ListPendingChanges(ctx context.Context, arg ListPendingChanges
 			&i.DecidedAt,
 			&i.DecidedBy,
 			&i.ListName,
+			&i.MemberName,
 			&i.TotalCount,
 		); err != nil {
 			return nil, err
@@ -1677,10 +1681,12 @@ func (q *Queries) UpdateRule(ctx context.Context, arg UpdateRuleParams) (Subscri
 }
 
 const upsertListmonkList = `-- name: UpsertListmonkList :exec
-INSERT INTO newsletter_lists (name, description, listmonk_id, listmonk_subscriber_count, synced_at)
-VALUES ($1, $2, $3::int, $4::int, now())
+INSERT INTO newsletter_lists (name, description, listmonk_id, listmonk_subscriber_count, visibility, synced_at)
+VALUES ($1, $2, $3::int, $4::int,
+        CASE WHEN $5::bool THEN 'public' ELSE 'private' END, now())
 ON CONFLICT (listmonk_id) DO UPDATE
 SET name = EXCLUDED.name,
+    visibility = CASE WHEN $5::bool THEN 'public' ELSE newsletter_lists.visibility END,
     description = EXCLUDED.description,
     listmonk_subscriber_count = EXCLUDED.listmonk_subscriber_count,
     synced_at = now(),
@@ -1693,17 +1699,19 @@ type UpsertListmonkListParams struct {
 	Description             string `json:"description"`
 	ListmonkID              int32  `json:"listmonk_id"`
 	ListmonkSubscriberCount int32  `json:"listmonk_subscriber_count"`
+	ListmonkPublic          bool   `json:"listmonk_public"`
 }
 
-// Listmonk list sync. New lists get the default 'private' visibility; an
-// existing list keeps its visibility and gets deleted_at cleared if it had
-// been soft-deleted and reappeared.
+// Listmonk list sync. A list that is public in Listmonk becomes 'public' here
+// on every sync; otherwise new lists get 'private' and existing ones keep
+// their visibility. A list that reappears gets deleted_at cleared.
 func (q *Queries) UpsertListmonkList(ctx context.Context, arg UpsertListmonkListParams) error {
 	_, err := q.db.Exec(ctx, upsertListmonkList,
 		arg.Name,
 		arg.Description,
 		arg.ListmonkID,
 		arg.ListmonkSubscriberCount,
+		arg.ListmonkPublic,
 	)
 	return err
 }

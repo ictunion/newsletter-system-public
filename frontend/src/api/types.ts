@@ -124,6 +124,7 @@ export interface Change {
   member_number: number | null
   list_id: string | null
   list_name?: string
+  member_name?: string
   payload: Record<string, unknown>
   status: 'pending' | 'approved' | 'rejected'
   detected_at: string

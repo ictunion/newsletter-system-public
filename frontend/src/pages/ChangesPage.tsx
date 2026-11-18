@@ -159,7 +159,11 @@ export function ChangesPage() {
               <td>{kindLabel.get(change.kind) ?? change.kind}</td>
               <td>
                 {change.member_number !== null && (
-                  <Link to={`/members?number=${change.member_number}`}>{change.member_number}</Link>
+                  <>
+                    {/* member_new has no subscriber here yet: fall back to orca's name in the payload */}
+                    {change.member_name ?? (typeof change.payload.name === 'string' ? change.payload.name : '')}{' '}
+                    (<Link to={`/members?number=${change.member_number}`}>{change.member_number}</Link>)
+                  </>
                 )}
               </td>
               <td>

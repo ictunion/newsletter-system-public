@@ -29,7 +29,7 @@ var (
 	ErrUnsubscribed = errors.New("member unsubscribed from the list")
 )
 
-// Service runs the member flows (docs/newsletter_service_plan.md, flows 1-3)
+// Service runs the member flows (docs/architecture.md, "orca calls")
 // on a transaction-bound *db.Queries. PushEnabled is false when Listmonk is
 // not configured: then no provider jobs are enqueued.
 type Service struct {
